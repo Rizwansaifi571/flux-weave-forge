@@ -126,6 +126,7 @@ function AssistantPage() {
           title: action.payload.title,
           description: action.payload.description,
           dueDate: action.payload.dueDate,
+          dueTime: action.payload.dueTime,
           priority: action.payload.priority ?? "medium",
           tags: action.payload.tags ?? [],
           focusMinutes: action.payload.focusMinutes ?? 0,

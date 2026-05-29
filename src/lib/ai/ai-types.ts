@@ -29,6 +29,7 @@ export type AiAction =
         title: string;
         description?: string;
         dueDate?: string;
+        dueTime?: string;
         priority?: Priority;
         category?: string;
         focusMinutes?: number;
@@ -43,6 +44,7 @@ export type AiAction =
           title?: string;
           description?: string;
           dueDate?: string;
+          dueTime?: string;
           priority?: Priority;
           category?: string;
           focusMinutes?: number;

@@ -109,6 +109,7 @@ export interface Task {
   description?: string;
   priority: Priority;
   dueDate?: string;
+  dueTime?: string;
   tags: string[];
   focusMinutes: number;
   category: string;
@@ -122,7 +123,7 @@ export interface Habit {
   name: string;
   emoji: string;
   color: string;
-  history: Record<string, boolean>; // YYYY-MM-DD -> done
+  history: Record<string, boolean>;
   createdAt: string;
 }
 
@@ -194,6 +195,17 @@ interface State {
 const today = () => new Date().toISOString().slice(0, 10);
 const uid = () => Math.random().toString(36).slice(2, 10);
 
+// Deterministic initial focus sessions (last 7 days with 0 minutes – no random)
+const getInitialFocusSessions = () => {
+  const sessions = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    sessions.push({ date: d.toISOString().slice(0, 10), minutes: 0 });
+  }
+  return sessions;
+};
+
 export const useStore = create<State>()(
   persist(
     (set, get) => ({
@@ -237,10 +249,7 @@ export const useStore = create<State>()(
       playlistImports: [],
       xp: 1240,
       level: 7,
-      focusSessions: Array.from({ length: 7 }).map((_, i) => {
-        const d = new Date(); d.setDate(d.getDate() - (6 - i));
-        return { date: d.toISOString().slice(0, 10), minutes: 40 + Math.floor(Math.random() * 120) };
-      }),
+      focusSessions: getInitialFocusSessions(), // deterministic, no random
       streakCount: 12,
       wallpaper: {
         theme: "neon",

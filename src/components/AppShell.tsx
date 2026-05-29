@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { LayoutDashboard, ListTodo, Timer, Flame, Wand2, Sparkles, Settings, Zap } from "lucide-react";
 import { AmbientBackground } from "./AmbientBackground";
 import { useStore } from "@/lib/store";
+import { useEffect, useState } from "react";
 
 const nav = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
@@ -18,6 +19,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const path = useRouterState({ select: (r) => r.location.pathname });
   const { xp, level, streakCount } = useStore();
   const xpInLevel = xp % 500;
+
+  // Focus lock state (disabled navigation when true)
+  const [focusLock, setFocusLock] = useState(false);
+
+  useEffect(() => {
+    const handler = (e: CustomEvent<{ active: boolean }>) => {
+      setFocusLock(e.detail.active);
+    };
+    window.addEventListener("focus-mode", handler as EventListener);
+    return () => {
+      window.removeEventListener("focus-mode", handler as EventListener);
+    };
+  }, []);
+
   return (
     <div className="dark min-h-screen text-foreground">
       <AmbientBackground />
@@ -30,8 +45,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </div>
             </div>
             <div>
-              <div className="font-semibold tracking-tight">WallTask <span className="text-gradient">AI</span></div>
-              <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Productivity OS</div>
+              <div className="font-semibold tracking-tight">
+                WallTask <span className="text-gradient">AI</span>
+              </div>
+              <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+                Productivity OS
+              </div>
             </div>
           </Link>
 
@@ -39,15 +58,27 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             {nav.map((item) => {
               const active = item.to === "/" ? path === "/" : path.startsWith(item.to);
               return (
-                <Link key={item.to} to={item.to} className="block">
+                <Link
+                  key={item.to}
+                  to={item.to}
+                  className={`block transition ${
+                    focusLock ? "pointer-events-none opacity-50" : ""
+                  }`}
+                  aria-disabled={focusLock}
+                >
                   <motion.div
-                    whileHover={{ x: 3 }}
+                    whileHover={focusLock ? {} : { x: 3 }}
                     className={`relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition ${
-                      active ? "glass-strong text-foreground glow-soft" : "text-muted-foreground hover:text-foreground hover:bg-white/5"
+                      active
+                        ? "glass-strong text-foreground glow-soft"
+                        : "text-muted-foreground hover:text-foreground hover:bg-white/5"
                     }`}
                   >
                     {active && (
-                      <motion.div layoutId="activeNav" className="absolute left-0 top-1/2 -translate-y-1/2 h-6 w-1 rounded-r bg-gradient-primary" />
+                      <motion.div
+                        layoutId="activeNav"
+                        className="absolute left-0 top-1/2 -translate-y-1/2 h-6 w-1 rounded-r bg-gradient-primary"
+                      />
                     )}
                     <item.icon className="h-4 w-4" />
                     {item.label}
