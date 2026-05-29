@@ -5,13 +5,12 @@ import { GlassCard } from "@/components/GlassCard";
 import { useStore, todayStr } from "@/lib/store";
 import { motion } from "framer-motion";
 import { Send, Sparkles, AlertTriangle, TrendingUp, Target } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { askAssistant } from "@/lib/api/assistant.functions";
 import type { AiAction, AiContext } from "@/lib/ai/ai-types";
+import { importYouTubePlaylist } from "@/lib/api/youtube.functions";
 
 export const Route = createFileRoute("/assistant")({ component: AssistantPage });
-
-interface Msg { role: "user" | "ai"; text: string }
 
 function AssistantPage() {
   const {
@@ -27,11 +26,20 @@ function AssistantPage() {
     deleteTask,
     addGoal,
     updateLifeContext,
+    assistantMessages,
+    addAssistantMessage,
+    playlistImports,
+    addPlaylistImport,
   } = useStore();
-  const [messages, setMessages] = useState<Msg[]>([
-    { role: "ai", text: "I'm your productivity copilot. I see your tasks, habits, and focus patterns. Ask me anything — or let me suggest your next move." },
-  ]);
   const [input, setInput] = useState("");
+  const [playlistUrl, setPlaylistUrl] = useState("");
+  const [playlistTitle, setPlaylistTitle] = useState("");
+  const [goalTitle, setGoalTitle] = useState("");
+  const [playlistItems, setPlaylistItems] = useState<{ title: string; durationMinutes: number | null }[]>([]);
+  const [playlistDays, setPlaylistDays] = useState(10);
+  const [playlistError, setPlaylistError] = useState<string | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   const today = todayStr();
   const pending = tasks.filter((t) => !t.completed);
@@ -45,6 +53,10 @@ function AssistantPage() {
     { icon: TrendingUp, color: "text-neon-cyan", title: "Focus rhythm", text: focusToday < 60 ? `Only ${focusToday}m of focus today. Aim for one 50-min block now.` : `${focusToday}m focused today. Solid pace — protect your evening.` },
     { icon: Sparkles, color: "text-neon-blue", title: "Habits", text: habitMiss.length ? `${habitMiss.length} habit(s) untouched today: ${habitMiss.map(h => h.emoji).join(" ")}` : "All habits checked. Keep the chain alive." },
   ];
+
+  const totalPlaylistMinutes = useMemo(() => {
+    return playlistItems.reduce((sum, item) => sum + (item.durationMinutes ?? 0), 0);
+  }, [playlistItems]);
 
   const buildContext = (): AiContext => ({
     userName,
@@ -96,6 +108,15 @@ function AssistantPage() {
       preferredStudyHours: lifeContext.preferredStudyHours,
       placementGoals: lifeContext.placementGoals,
     },
+    recentMessages: assistantMessages.slice(-12).map((m) => ({
+      role: m.role,
+      text: m.text,
+    })),
+    playlistImports: playlistImports.map((playlist) => ({
+      id: playlist.id,
+      title: playlist.title,
+      items: playlist.items,
+    })),
   });
 
   const applyActions = (actions: AiAction[]) => {
@@ -139,17 +160,93 @@ function AssistantPage() {
     e.preventDefault();
     if (!input.trim()) return;
     const q = input;
-    setMessages((m) => [...m, { role: "user", text: q }]);
+    addAssistantMessage({ role: "user", text: q });
     setInput("");
     try {
       const res = await askAssistant({ data: { message: q, context: buildContext() } });
       if (res.actions?.length) {
         applyActions(res.actions);
       }
-      setMessages((m) => [...m, { role: "ai", text: res.response }]);
+      addAssistantMessage({ role: "ai", text: res.response });
     } catch (error) {
       console.error("Error calling AI assistant:", error);
-      setMessages((m) => [...m, { role: "ai", text: "Sorry, I had an issue. Please try again." }]);
+      const message = error instanceof Error
+        ? error.message
+        : "Sorry, I had an issue. Please try again.";
+      addAssistantMessage({ role: "ai", text: message });
+    }
+  };
+
+  const handleImportPlaylist = async () => {
+    if (!playlistUrl.trim()) return;
+    setIsImporting(true);
+    setPlaylistError(null);
+    try {
+      const res = await importYouTubePlaylist({ data: { url: playlistUrl.trim() } });
+      setPlaylistTitle(res.title);
+      setGoalTitle(res.title);
+      setPlaylistItems(res.items.map((item) => ({
+        title: item.title,
+        durationMinutes: item.durationMinutes,
+      })));
+      addPlaylistImport({
+        title: res.title,
+        items: res.items.map((item, index) => ({
+          index: index + 1,
+          title: item.title,
+          durationMinutes: item.durationMinutes,
+        })),
+      });
+      const preview = res.items.slice(0, 8).map((item, index) => {
+        const duration = item.durationMinutes != null ? ` (${item.durationMinutes}m)` : "";
+        return `${index + 1}. ${item.title}${duration}`;
+      }).join("\n");
+      addAssistantMessage({
+        role: "ai",
+        text: `Playlist imported: "${res.title}" with ${res.items.length} videos.\nPreview:\n${preview}\nYou can now say: "continue from lecture 62" or ask for a roadmap.`,
+      });
+    } catch (error) {
+      console.error("Error importing playlist:", error);
+      const message = error instanceof Error
+        ? error.message
+        : "Unable to import playlist. Check the URL and API key.";
+      setPlaylistError(message);
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const handleGenerateRoadmap = async () => {
+    if (!playlistItems.length) return;
+    setIsGenerating(true);
+    const name = goalTitle.trim() || playlistTitle || "Playlist";
+    const itemsText = playlistItems
+      .map((item, index) => {
+        const duration = item.durationMinutes != null ? ` (${item.durationMinutes}m)` : "";
+        return `${index + 1}. ${item.title}${duration}`;
+      })
+      .join("\n");
+
+    const prompt = [
+      `Create a ${playlistDays}-day roadmap for the playlist "${name}".`,
+      "Create a goal and a daily task breakdown that finishes everything on time.",
+      "Use create_goal for the roadmap and create_task for each day.",
+      "Playlist items:",
+      itemsText,
+    ].join("\n");
+
+    addAssistantMessage({ role: "user", text: prompt });
+    try {
+      const res = await askAssistant({ data: { message: prompt, context: buildContext() } });
+      if (res.actions?.length) {
+        applyActions(res.actions);
+      }
+      addAssistantMessage({ role: "ai", text: res.response });
+    } catch (error) {
+      console.error("Error generating roadmap:", error);
+      addAssistantMessage({ role: "ai", text: "Sorry, I could not generate the roadmap." });
+    } finally {
+      setIsGenerating(false);
     }
   };
 
@@ -161,7 +258,7 @@ function AssistantPage() {
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6">
           <GlassCard className="flex flex-col !p-0 h-[600px]">
             <div className="flex-1 overflow-y-auto p-6 space-y-4 scrollbar-thin">
-              {messages.map((m, i) => (
+              {assistantMessages.map((m, i) => (
                 <motion.div
                   key={i}
                   initial={{ opacity: 0, y: 8 }}
@@ -193,6 +290,58 @@ function AssistantPage() {
           </GlassCard>
 
           <div className="space-y-3">
+            <GlassCard className="p-4 space-y-3">
+              <div>
+                <div className="text-xs uppercase tracking-wider text-muted-foreground">Playlist Import</div>
+                <div className="text-lg font-semibold">YouTube Roadmap Builder</div>
+              </div>
+              <input
+                value={playlistUrl}
+                onChange={(e) => setPlaylistUrl(e.target.value)}
+                placeholder="Paste YouTube playlist URL"
+                className="w-full glass rounded-xl px-4 py-2.5 text-sm outline-none"
+              />
+              <div className="grid grid-cols-[1fr_120px] gap-2">
+                <input
+                  value={goalTitle}
+                  onChange={(e) => setGoalTitle(e.target.value)}
+                  placeholder="Goal title"
+                  className="w-full glass rounded-xl px-4 py-2.5 text-sm outline-none"
+                />
+                <input
+                  type="number"
+                  min={1}
+                  value={playlistDays}
+                  onChange={(e) => setPlaylistDays(Number(e.target.value))}
+                  className="w-full glass rounded-xl px-4 py-2.5 text-sm outline-none"
+                  aria-label="Target days"
+                />
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleImportPlaylist}
+                  className="flex-1 rounded-xl bg-white/10 px-4 py-2 text-sm hover:bg-white/20 transition"
+                >
+                  {isImporting ? "Importing..." : "Import playlist"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleGenerateRoadmap}
+                  className="flex-1 rounded-xl bg-gradient-primary px-4 py-2 text-sm text-white glow-soft hover:scale-[1.02] transition"
+                >
+                  {isGenerating ? "Generating..." : "Generate roadmap"}
+                </button>
+              </div>
+              {playlistError ? (
+                <div className="text-xs text-red-300">{playlistError}</div>
+              ) : null}
+              {playlistItems.length ? (
+                <div className="text-xs text-muted-foreground">
+                  {playlistItems.length} videos • {totalPlaylistMinutes} min total
+                </div>
+              ) : null}
+            </GlassCard>
             {insights.map((ins, i) => (
               <motion.div
                 key={ins.title}

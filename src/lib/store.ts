@@ -83,6 +83,26 @@ export interface UserBehavior {
   bestDays: string[];
   patterns: BehaviorPattern[];
 }
+
+export interface PlaylistImportItem {
+  index: number;
+  title: string;
+  durationMinutes: number | null;
+}
+
+export interface PlaylistImport {
+  id: string;
+  title: string;
+  items: PlaylistImportItem[];
+  importedAt: string;
+}
+
+export interface AssistantMessage {
+  id: string;
+  role: "user" | "ai";
+  text: string;
+  createdAt: string;
+}
 export interface Task {
   id: string;
   title: string;
@@ -124,6 +144,8 @@ interface State {
   lifeContext: LifeContext;
   dailyBriefings: DailyBriefing[];
   behavior: UserBehavior;
+  assistantMessages: AssistantMessage[];
+  playlistImports: PlaylistImport[];
   xp: number;
   level: number;
   focusSessions: { date: string; minutes: number }[];
@@ -157,6 +179,12 @@ interface State {
   getBriefing: (date: string) => DailyBriefing | undefined;
 
   recordBehavior: (patch: Partial<UserBehavior>) => void;
+
+  addAssistantMessage: (message: Omit<AssistantMessage, "id" | "createdAt">) => void;
+  clearAssistantMessages: () => void;
+
+  addPlaylistImport: (playlist: Omit<PlaylistImport, "id" | "importedAt">) => void;
+  clearPlaylistImports: () => void;
 
   logFocus: (minutes: number) => void;
   setWallpaper: (patch: Partial<WallpaperConfig>) => void;
@@ -198,6 +226,15 @@ export const useStore = create<State>()(
         bestDays: [],
         patterns: [],
       },
+      assistantMessages: [
+        {
+          id: uid(),
+          role: "ai",
+          text: "I'm your productivity copilot. I see your tasks, habits, and focus patterns. Ask me anything — or let me suggest your next move.",
+          createdAt: new Date().toISOString(),
+        },
+      ],
+      playlistImports: [],
       xp: 1240,
       level: 7,
       focusSessions: Array.from({ length: 7 }).map((_, i) => {
@@ -284,6 +321,27 @@ export const useStore = create<State>()(
       getBriefing: (date) => get().dailyBriefings.find((b) => b.date === date),
 
       recordBehavior: (patch) => set((s) => ({ behavior: { ...s.behavior, ...patch } })),
+
+      addAssistantMessage: (message) => set((s) => ({
+        assistantMessages: [
+          ...s.assistantMessages,
+          { ...message, id: uid(), createdAt: new Date().toISOString() },
+        ],
+      })),
+      clearAssistantMessages: () => set({ assistantMessages: [] }),
+
+      addPlaylistImport: (playlist) => set((s) => ({
+        playlistImports: [
+          {
+            id: uid(),
+            title: playlist.title,
+            items: playlist.items,
+            importedAt: new Date().toISOString(),
+          },
+          ...s.playlistImports,
+        ],
+      })),
+      clearPlaylistImports: () => set({ playlistImports: [] }),
 
       logFocus: (minutes) => set((s) => {
         const d = today();

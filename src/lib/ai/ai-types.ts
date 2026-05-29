@@ -18,6 +18,8 @@ export interface AiContext {
   streakCount: number;
   goals: { id: string; title: string; progress: number; deadline?: string; category: LifeCategory; status: string }[];
   lifeContext: AiLifeContext;
+  recentMessages: { role: "user" | "ai"; text: string }[];
+  playlistImports: { id: string; title: string; items: { index: number; title: string; durationMinutes: number | null }[] }[];
 }
 
 export type AiAction =
