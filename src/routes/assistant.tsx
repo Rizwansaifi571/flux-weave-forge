@@ -6,13 +6,28 @@ import { useStore, todayStr } from "@/lib/store";
 import { motion } from "framer-motion";
 import { Send, Sparkles, AlertTriangle, TrendingUp, Target } from "lucide-react";
 import { useState } from "react";
+import { askAssistant } from "@/lib/api/assistant.functions";
+import type { AiAction, AiContext } from "@/lib/ai/ai-types";
 
 export const Route = createFileRoute("/assistant")({ component: AssistantPage });
 
 interface Msg { role: "user" | "ai"; text: string }
 
 function AssistantPage() {
-  const { tasks, habits, focusSessions, streakCount } = useStore();
+  const {
+    tasks,
+    habits,
+    goals,
+    lifeContext,
+    focusSessions,
+    streakCount,
+    userName,
+    addTask,
+    updateTask,
+    deleteTask,
+    addGoal,
+    updateLifeContext,
+  } = useStore();
   const [messages, setMessages] = useState<Msg[]>([
     { role: "ai", text: "I'm your productivity copilot. I see your tasks, habits, and focus patterns. Ask me anything — or let me suggest your next move." },
   ]);
@@ -31,22 +46,111 @@ function AssistantPage() {
     { icon: Sparkles, color: "text-neon-blue", title: "Habits", text: habitMiss.length ? `${habitMiss.length} habit(s) untouched today: ${habitMiss.map(h => h.emoji).join(" ")}` : "All habits checked. Keep the chain alive." },
   ];
 
-  const generate = (q: string): string => {
-    const lower = q.toLowerCase();
-    if (lower.includes("priorit")) return `Your top priority right now: "${pending.find(t => t.priority === "high")?.title ?? "set a high-priority task"}". Block 50 minutes. No tabs, no Slack.`;
-    if (lower.includes("overload") || lower.includes("too much")) return `You have ${pending.length} open tasks and a ${streakCount}-day streak. If it feels heavy, cut to 3 must-do items today.`;
-    if (lower.includes("focus")) return `Today: ${focusToday}m focused. Push to 120m. Start a Pomodoro now from the Focus tab.`;
-    if (lower.includes("habit")) return habitMiss.length ? `Missing: ${habitMiss.map(h => h.name).join(", ")}. Do the easiest one in the next 5 minutes.` : "All habits done. Don't break the chain tomorrow.";
-    return `Based on your data: focus on shipping "${pending[0]?.title ?? "your next task"}". You're on a ${streakCount}-day streak — momentum compounds.`;
+  const buildContext = (): AiContext => ({
+    userName,
+    today,
+    tasks: tasks.map((t) => ({
+      id: t.id,
+      title: t.title,
+      dueDate: t.dueDate,
+      priority: t.priority,
+      category: t.category,
+      completed: t.completed,
+    })),
+    habits: habits.map((h) => ({
+      id: h.id,
+      name: h.name,
+      emoji: h.emoji,
+      doneToday: Boolean(h.history[today]),
+    })),
+    focusToday,
+    streakCount,
+    goals: goals.map((g) => ({
+      id: g.id,
+      title: g.title,
+      progress: g.progress,
+      deadline: g.deadline,
+      category: g.category,
+      status: g.status,
+    })),
+    lifeContext: {
+      collegeTimetable: lifeContext.collegeTimetable.map((c) => ({
+        day: c.day,
+        start: c.start,
+        end: c.end,
+        label: c.label,
+      })),
+      exams: lifeContext.exams.map((e) => ({
+        title: e.title,
+        date: e.date,
+        course: e.course,
+      })),
+      internships: lifeContext.internships.map((i) => ({
+        company: i.company,
+        role: i.role,
+        startDate: i.startDate,
+        endDate: i.endDate,
+        status: i.status,
+      })),
+      sleepSchedule: lifeContext.sleepSchedule,
+      preferredStudyHours: lifeContext.preferredStudyHours,
+      placementGoals: lifeContext.placementGoals,
+    },
+  });
+
+  const applyActions = (actions: AiAction[]) => {
+    actions.forEach((action) => {
+      if (action.type === "create_task") {
+        addTask({
+          title: action.payload.title,
+          description: action.payload.description,
+          dueDate: action.payload.dueDate,
+          priority: action.payload.priority ?? "medium",
+          tags: action.payload.tags ?? [],
+          focusMinutes: action.payload.focusMinutes ?? 0,
+          category: action.payload.category ?? "Work",
+        });
+      }
+
+      if (action.type === "update_task") {
+        updateTask(action.payload.id, action.payload.patch);
+      }
+
+      if (action.type === "delete_task") {
+        deleteTask(action.payload.id);
+      }
+
+      if (action.type === "create_goal") {
+        addGoal({
+          title: action.payload.title,
+          description: action.payload.description ?? "",
+          deadline: action.payload.deadline,
+          category: action.payload.category ?? "career",
+        });
+      }
+
+      if (action.type === "set_context") {
+        updateLifeContext(action.payload);
+      }
+    });
   };
 
-  const send = (e: React.FormEvent) => {
+  const send = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim()) return;
     const q = input;
     setMessages((m) => [...m, { role: "user", text: q }]);
     setInput("");
-    setTimeout(() => setMessages((m) => [...m, { role: "ai", text: generate(q) }]), 600);
+    try {
+      const res = await askAssistant({ data: { message: q, context: buildContext() } });
+      if (res.actions?.length) {
+        applyActions(res.actions);
+      }
+      setMessages((m) => [...m, { role: "ai", text: res.response }]);
+    } catch (error) {
+      console.error("Error calling AI assistant:", error);
+      setMessages((m) => [...m, { role: "ai", text: "Sorry, I had an issue. Please try again." }]);
+    }
   };
 
   return (
@@ -79,7 +183,10 @@ function AssistantPage() {
                 placeholder="Ask about priorities, focus, or burnout..."
                 className="flex-1 glass rounded-xl px-4 py-2.5 text-sm outline-none"
               />
-              <button className="h-10 w-10 rounded-xl bg-gradient-primary grid place-items-center glow-soft hover:scale-105 transition">
+              <button
+                className="h-10 w-10 rounded-xl bg-gradient-primary grid place-items-center glow-soft hover:scale-105 transition"
+                aria-label="Send message"
+              >
                 <Send className="h-4 w-4 text-white" />
               </button>
             </form>

@@ -2,6 +2,87 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 export type Priority = "low" | "medium" | "high";
+export type LifeCategory = "career" | "college" | "fitness" | "finance" | "personal";
+export type GoalStatus = "active" | "paused" | "completed";
+
+export interface GoalPhase {
+  id: string;
+  title: string;
+  tasks: string[];
+  order: number;
+  completed: boolean;
+}
+
+export interface Goal {
+  id: string;
+  title: string;
+  description: string;
+  deadline?: string;
+  phases: GoalPhase[];
+  progress: number;
+  category: LifeCategory;
+  status: GoalStatus;
+  createdAt: string;
+}
+
+export interface TimetableEntry {
+  id: string;
+  day: string;
+  start: string;
+  end: string;
+  label: string;
+}
+
+export interface Exam {
+  id: string;
+  title: string;
+  date: string;
+  course?: string;
+  notes?: string;
+}
+
+export interface Internship {
+  id: string;
+  company: string;
+  role: string;
+  startDate?: string;
+  endDate?: string;
+  status: "active" | "paused" | "completed";
+}
+
+export interface LifeContext {
+  collegeTimetable: TimetableEntry[];
+  exams: Exam[];
+  internships: Internship[];
+  sleepSchedule: { bedtime: string; wakeup: string };
+  preferredStudyHours: { start: string; end: string };
+  placementGoals: string[];
+}
+
+export interface DailyBriefing {
+  date: string;
+  morningBriefing: string;
+  eveningSummary: string;
+  tasksCompleted: number;
+  tasksMissed: number;
+  focusTime: number;
+  riskAlerts: string[];
+}
+
+export interface BehaviorPattern {
+  id: string;
+  label: string;
+  strength: number;
+  notes?: string;
+}
+
+export interface UserBehavior {
+  productiveHours: Record<string, number>;
+  taskCompletionByType: Record<string, number>;
+  averageFocusDuration: number;
+  bestDays: string[];
+  patterns: BehaviorPattern[];
+}
 export interface Task {
   id: string;
   title: string;
@@ -39,6 +120,10 @@ export interface WallpaperConfig {
 interface State {
   tasks: Task[];
   habits: Habit[];
+  goals: Goal[];
+  lifeContext: LifeContext;
+  dailyBriefings: DailyBriefing[];
+  behavior: UserBehavior;
   xp: number;
   level: number;
   focusSessions: { date: string; minutes: number }[];
@@ -55,6 +140,23 @@ interface State {
   addHabit: (h: Omit<Habit, "id" | "createdAt" | "history">) => void;
   toggleHabit: (id: string, date: string) => void;
   deleteHabit: (id: string) => void;
+
+  addGoal: (g: Omit<Goal, "id" | "createdAt" | "phases" | "progress" | "status"> & {
+    phases?: GoalPhase[];
+    progress?: number;
+    status?: GoalStatus;
+  }) => void;
+  updateGoal: (id: string, patch: Partial<Goal>) => void;
+  deleteGoal: (id: string) => void;
+  addGoalPhase: (goalId: string, phase: Omit<GoalPhase, "id" | "completed"> & { completed?: boolean }) => void;
+
+  setLifeContext: (context: LifeContext) => void;
+  updateLifeContext: (patch: Partial<LifeContext>) => void;
+
+  saveBriefing: (briefing: DailyBriefing) => void;
+  getBriefing: (date: string) => DailyBriefing | undefined;
+
+  recordBehavior: (patch: Partial<UserBehavior>) => void;
 
   logFocus: (minutes: number) => void;
   setWallpaper: (patch: Partial<WallpaperConfig>) => void;
@@ -79,6 +181,23 @@ export const useStore = create<State>()(
         { id: uid(), name: "Meditate", emoji: "🧘", color: "neon-cyan", history: {}, createdAt: new Date().toISOString() },
         { id: uid(), name: "No social media", emoji: "🚫", color: "neon-pink", history: {}, createdAt: new Date().toISOString() },
       ],
+      goals: [],
+      lifeContext: {
+        collegeTimetable: [],
+        exams: [],
+        internships: [],
+        sleepSchedule: { bedtime: "23:30", wakeup: "07:30" },
+        preferredStudyHours: { start: "20:00", end: "00:00" },
+        placementGoals: [],
+      },
+      dailyBriefings: [],
+      behavior: {
+        productiveHours: {},
+        taskCompletionByType: {},
+        averageFocusDuration: 0,
+        bestDays: [],
+        patterns: [],
+      },
       xp: 1240,
       level: 7,
       focusSessions: Array.from({ length: 7 }).map((_, i) => {
@@ -114,6 +233,57 @@ export const useStore = create<State>()(
         habits: s.habits.map((h) => h.id === id ? { ...h, history: { ...h.history, [date]: !h.history[date] } } : h),
       })),
       deleteHabit: (id) => set((s) => ({ habits: s.habits.filter((h) => h.id !== id) })),
+
+      addGoal: (g) => set((s) => ({
+        goals: [
+          {
+            id: uid(),
+            title: g.title,
+            description: g.description ?? "",
+            deadline: g.deadline,
+            phases: g.phases ?? [],
+            progress: g.progress ?? 0,
+            category: g.category,
+            status: g.status ?? "active",
+            createdAt: new Date().toISOString(),
+          },
+          ...s.goals,
+        ],
+      })),
+      updateGoal: (id, patch) => set((s) => ({
+        goals: s.goals.map((g) => g.id === id ? { ...g, ...patch } : g),
+      })),
+      deleteGoal: (id) => set((s) => ({ goals: s.goals.filter((g) => g.id !== id) })),
+      addGoalPhase: (goalId, phase) => set((s) => ({
+        goals: s.goals.map((g) => {
+          if (g.id !== goalId) return g;
+          const order = phase.order ?? g.phases.length + 1;
+          return {
+            ...g,
+            phases: [
+              ...g.phases,
+              {
+                id: uid(),
+                title: phase.title,
+                tasks: phase.tasks ?? [],
+                order,
+                completed: phase.completed ?? false,
+              },
+            ],
+          };
+        }),
+      })),
+
+      setLifeContext: (context) => set({ lifeContext: context }),
+      updateLifeContext: (patch) => set((s) => ({ lifeContext: { ...s.lifeContext, ...patch } })),
+
+      saveBriefing: (briefing) => set((s) => {
+        const existing = s.dailyBriefings.filter((b) => b.date !== briefing.date);
+        return { dailyBriefings: [briefing, ...existing] };
+      }),
+      getBriefing: (date) => get().dailyBriefings.find((b) => b.date === date),
+
+      recordBehavior: (patch) => set((s) => ({ behavior: { ...s.behavior, ...patch } })),
 
       logFocus: (minutes) => set((s) => {
         const d = today();

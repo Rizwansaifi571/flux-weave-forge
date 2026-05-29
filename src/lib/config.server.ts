@@ -24,3 +24,10 @@ export function getServerConfig() {
     //   stripeSecretKey: process.env.STRIPE_SECRET_KEY,
   };
 }
+
+// Example of a secret that's NOT exposed to the client
+export const config = {
+  get groqApiKey() {
+    return process.env.GROQ_API_KEY ?? "";
+  },
+};
