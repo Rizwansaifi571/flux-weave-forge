@@ -9,11 +9,17 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as WallpaperRouteImport } from './routes/wallpaper'
 import { Route as TasksRouteImport } from './routes/tasks'
 import { Route as HabitsRouteImport } from './routes/habits'
 import { Route as FocusRouteImport } from './routes/focus'
 import { Route as IndexRouteImport } from './routes/index'
 
+const WallpaperRoute = WallpaperRouteImport.update({
+  id: '/wallpaper',
+  path: '/wallpaper',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const TasksRoute = TasksRouteImport.update({
   id: '/tasks',
   path: '/tasks',
@@ -40,12 +46,14 @@ export interface FileRoutesByFullPath {
   '/focus': typeof FocusRoute
   '/habits': typeof HabitsRoute
   '/tasks': typeof TasksRoute
+  '/wallpaper': typeof WallpaperRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/focus': typeof FocusRoute
   '/habits': typeof HabitsRoute
   '/tasks': typeof TasksRoute
+  '/wallpaper': typeof WallpaperRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -53,13 +61,14 @@ export interface FileRoutesById {
   '/focus': typeof FocusRoute
   '/habits': typeof HabitsRoute
   '/tasks': typeof TasksRoute
+  '/wallpaper': typeof WallpaperRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/focus' | '/habits' | '/tasks'
+  fullPaths: '/' | '/focus' | '/habits' | '/tasks' | '/wallpaper'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/focus' | '/habits' | '/tasks'
-  id: '__root__' | '/' | '/focus' | '/habits' | '/tasks'
+  to: '/' | '/focus' | '/habits' | '/tasks' | '/wallpaper'
+  id: '__root__' | '/' | '/focus' | '/habits' | '/tasks' | '/wallpaper'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -67,10 +76,18 @@ export interface RootRouteChildren {
   FocusRoute: typeof FocusRoute
   HabitsRoute: typeof HabitsRoute
   TasksRoute: typeof TasksRoute
+  WallpaperRoute: typeof WallpaperRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/wallpaper': {
+      id: '/wallpaper'
+      path: '/wallpaper'
+      fullPath: '/wallpaper'
+      preLoaderRoute: typeof WallpaperRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/tasks': {
       id: '/tasks'
       path: '/tasks'
@@ -107,6 +124,7 @@ const rootRouteChildren: RootRouteChildren = {
   FocusRoute: FocusRoute,
   HabitsRoute: HabitsRoute,
   TasksRoute: TasksRoute,
+  WallpaperRoute: WallpaperRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
