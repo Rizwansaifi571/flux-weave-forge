@@ -13,6 +13,7 @@ import { Route as WallpaperRouteImport } from './routes/wallpaper'
 import { Route as TasksRouteImport } from './routes/tasks'
 import { Route as HabitsRouteImport } from './routes/habits'
 import { Route as FocusRouteImport } from './routes/focus'
+import { Route as AssistantRouteImport } from './routes/assistant'
 import { Route as IndexRouteImport } from './routes/index'
 
 const WallpaperRoute = WallpaperRouteImport.update({
@@ -35,6 +36,11 @@ const FocusRoute = FocusRouteImport.update({
   path: '/focus',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AssistantRoute = AssistantRouteImport.update({
+  id: '/assistant',
+  path: '/assistant',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -43,6 +49,7 @@ const IndexRoute = IndexRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/assistant': typeof AssistantRoute
   '/focus': typeof FocusRoute
   '/habits': typeof HabitsRoute
   '/tasks': typeof TasksRoute
@@ -50,6 +57,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/assistant': typeof AssistantRoute
   '/focus': typeof FocusRoute
   '/habits': typeof HabitsRoute
   '/tasks': typeof TasksRoute
@@ -58,6 +66,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/assistant': typeof AssistantRoute
   '/focus': typeof FocusRoute
   '/habits': typeof HabitsRoute
   '/tasks': typeof TasksRoute
@@ -65,14 +74,22 @@ export interface FileRoutesById {
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/focus' | '/habits' | '/tasks' | '/wallpaper'
+  fullPaths: '/' | '/assistant' | '/focus' | '/habits' | '/tasks' | '/wallpaper'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/focus' | '/habits' | '/tasks' | '/wallpaper'
-  id: '__root__' | '/' | '/focus' | '/habits' | '/tasks' | '/wallpaper'
+  to: '/' | '/assistant' | '/focus' | '/habits' | '/tasks' | '/wallpaper'
+  id:
+    | '__root__'
+    | '/'
+    | '/assistant'
+    | '/focus'
+    | '/habits'
+    | '/tasks'
+    | '/wallpaper'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AssistantRoute: typeof AssistantRoute
   FocusRoute: typeof FocusRoute
   HabitsRoute: typeof HabitsRoute
   TasksRoute: typeof TasksRoute
@@ -109,6 +126,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FocusRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/assistant': {
+      id: '/assistant'
+      path: '/assistant'
+      fullPath: '/assistant'
+      preLoaderRoute: typeof AssistantRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -121,6 +145,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AssistantRoute: AssistantRoute,
   FocusRoute: FocusRoute,
   HabitsRoute: HabitsRoute,
   TasksRoute: TasksRoute,
