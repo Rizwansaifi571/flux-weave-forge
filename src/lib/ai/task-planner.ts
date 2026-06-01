@@ -8,6 +8,7 @@ import {
   type TaskPlanData,
   type TaskPlanItem,
 } from "@/lib/ai/task-ai.shared";
+import { extractRoadmapSource } from "@/lib/api/roadmap-source.functions";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const LECTURE_PATTERN = /(?:^|\s)(?:\d+\s+)?true\s+(\d{1,2}:\d{2})\s+Now playing\s+/gi;
@@ -174,6 +175,10 @@ function buildLectureRoadmap(goal: string, lectures: ExtractedLecture[], targetD
   };
 }
 
+function hasUrl(input: string) {
+  return /https?:\/\/[^\s<>"')]+/i.test(input);
+}
+
 function fallbackPlan(goal: string): TaskPlanData {
   const title = normalizeTitle(goal);
   return {
@@ -242,6 +247,23 @@ export function buildTaskDrafts(plan: { title: string; items: TaskPlanItem[] }):
 export async function generateTaskPlan(goal: string, context: AiContext) {
   const requestedDays = extractRequestedDays(goal) ?? 7;
   const lectures = extractLectures(goal);
+  const source = hasUrl(goal)
+    ? await extractRoadmapSource({ data: { input: goal } }).catch(() => null)
+    : null;
+  const sourceLectures =
+    source?.items?.map((item) => ({
+      title: item.title,
+      durationMinutes: item.durationMinutes,
+    })) ?? [];
+
+  if (source && (source.kind === "youtube_playlist" || sourceLectures.length >= 10)) {
+    const roadmap = buildLectureRoadmap(source.title || goal, sourceLectures, requestedDays);
+    return {
+      plan: roadmap,
+      tasks: buildTaskDrafts(roadmap),
+      raw: JSON.stringify({ source, roadmap }),
+    };
+  }
 
   if (lectures.length >= 6) {
     const roadmap = buildLectureRoadmap(goal, lectures, requestedDays);
@@ -272,6 +294,29 @@ export async function generateTaskPlan(goal: string, context: AiContext) {
     "- Keep the response free of markdown and extra commentary.",
     "",
     `User goal: ${goal}`,
+    source
+      ? [
+          "",
+          "Source details:",
+          `Source title: ${source.title}`,
+          `Source type: ${source.kind}`,
+          source.url ? `Source URL: ${source.url}` : "",
+          "Source summary:",
+          source.summary || "(no summary available)",
+          "Source items:",
+          source.items
+            .slice(0, 40)
+            .map(
+              (item, index) =>
+                `${index + 1}. ${item.title}${item.durationMinutes ? ` (${item.durationMinutes}m)` : ""}`,
+            )
+            .join("\n"),
+          "",
+          "If the source already contains a lecture or chapter list, preserve those names in the roadmap.",
+        ]
+          .filter(Boolean)
+          .join("\n")
+      : "",
   ].join("\n");
 
   const raw = await requestTaskAssistant(prompt, context);

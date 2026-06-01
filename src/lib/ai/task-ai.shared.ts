@@ -26,6 +26,20 @@ export interface TaskDraft {
   dueDate?: string;
 }
 
+export interface RoadmapSourceItem {
+  title: string;
+  durationMinutes: number | null;
+  url?: string;
+}
+
+export interface RoadmapSource {
+  kind: "youtube_playlist" | "webpage" | "text";
+  title: string;
+  url?: string;
+  summary: string;
+  items: RoadmapSourceItem[];
+}
+
 export interface CoachInsight {
   mostProductiveHour: string;
   weakArea: string;

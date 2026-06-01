@@ -55,7 +55,7 @@ export function AiCommandPanel({ onSubmit, isLoading = false }: AiCommandPanelPr
               value={command}
               onChange={(e) => setCommand(e.target.value)}
               onFocus={() => setShowSuggestions(true)}
-              placeholder="Tell me what you want to accomplish..."
+              placeholder="Paste a YouTube playlist, website link, or goal..."
               className="w-full bg-black/40 border border-neon-cyan/20 rounded-lg px-4 py-3 text-sm text-white placeholder:text-muted-foreground outline-none focus:border-neon-cyan/50 focus:ring-1 focus:ring-neon-cyan/30 transition resize-none min-h-[80px]"
             />
             <button
