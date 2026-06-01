@@ -1,9 +1,15 @@
 import type { GeneratedPlan, PlanItem } from "@/components/PlanConfirmation";
-import type { AiContext, AiResponse } from "@/lib/ai/ai-types";
-import { runAssistant } from "@/lib/ai/ai-engine.server";
+import type { AiResponse } from "@/lib/ai/ai-types";
 
 export interface ParsedCommand {
-  intent: "goal_plan" | "plan_day" | "plan_week" | "reschedule" | "break_down" | "prioritize" | "analyze";
+  intent:
+    | "goal_plan"
+    | "plan_day"
+    | "plan_week"
+    | "reschedule"
+    | "break_down"
+    | "prioritize"
+    | "analyze";
   target?: string;
   duration?: string;
 }
@@ -14,8 +20,11 @@ export function parseCommand(input: string): ParsedCommand {
 
   if (
     lower.includes("plan my day") ||
-    lower.includes("today") ||
-    lower.includes("hours today")
+    lower.includes("what should i do today") ||
+    lower.includes("today's") ||
+    lower.includes("hours today") ||
+    lower.includes("time today") ||
+    /\b(i have|available)\b.*\b(hours?|hrs?|minutes?|mins?)\b/i.test(lower)
   ) {
     return { intent: "plan_day" };
   }
@@ -24,11 +33,7 @@ export function parseCommand(input: string): ParsedCommand {
     return { intent: "plan_week" };
   }
 
-  if (
-    lower.includes("reschedule") ||
-    lower.includes("overdue") ||
-    lower.includes("couldn't")
-  ) {
+  if (lower.includes("reschedule") || lower.includes("overdue") || lower.includes("couldn't")) {
     return { intent: "reschedule" };
   }
 
@@ -44,11 +49,7 @@ export function parseCommand(input: string): ParsedCommand {
     return { intent: "prioritize" };
   }
 
-  if (
-    lower.includes("analyze") ||
-    lower.includes("productivity") ||
-    lower.includes("report")
-  ) {
+  if (lower.includes("analyze") || lower.includes("productivity") || lower.includes("report")) {
     return { intent: "analyze" };
   }
 
@@ -58,6 +59,11 @@ export function parseCommand(input: string): ParsedCommand {
 
 // Generate a plan from AI response
 export function generatePlanFromResponse(response: AiResponse): GeneratedPlan {
+  const structured = tryParseStructuredPlan(response.response);
+  if (structured) {
+    return structured;
+  }
+
   const lines = response.response.split("\n").filter((l) => l.trim());
 
   const items: PlanItem[] = lines
@@ -82,6 +88,44 @@ export function generatePlanFromResponse(response: AiResponse): GeneratedPlan {
   };
 
   return plan;
+}
+
+function tryParseStructuredPlan(response: string): GeneratedPlan | null {
+  const cleaned = response
+    .replace(/```json/gi, "")
+    .replace(/```/g, "")
+    .trim();
+
+  try {
+    const parsed = JSON.parse(cleaned) as Partial<GeneratedPlan> & { items?: PlanItem[] };
+    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.items)) {
+      return null;
+    }
+
+    return {
+      title:
+        typeof parsed.title === "string" && parsed.title.trim()
+          ? parsed.title.trim()
+          : "Generated Plan",
+      description: typeof parsed.description === "string" ? parsed.description : undefined,
+      duration: typeof parsed.duration === "string" ? parsed.duration : undefined,
+      estimatedCommitment:
+        typeof parsed.estimatedCommitment === "string"
+          ? parsed.estimatedCommitment
+          : "2-3 hours/day",
+      items: parsed.items.slice(0, 8).map((item, idx) => ({
+        phase: item.phase || `Phase ${idx + 1}`,
+        description: item.description,
+        taskCount: item.taskCount,
+      })),
+      totalTasks:
+        typeof parsed.totalTasks === "number"
+          ? parsed.totalTasks
+          : parsed.items.reduce((sum, item) => sum + (item.taskCount ?? 1), 0),
+    };
+  } catch {
+    return null;
+  }
 }
 
 function extractTitle(response: string): string {
@@ -131,9 +175,9 @@ function generateDefaultPlan(): PlanItem[] {
 export const QUICK_ACTION_PROMPTS: Record<string, string> = {
   "plan-day": "Plan my day - suggest the best tasks to work on given my available time",
   "plan-week": "Create a weekly plan - break down my major goals into daily tasks",
-  "reschedule":
+  reschedule:
     "I missed some tasks yesterday - intelligently reschedule my work to keep deadlines intact",
   "break-down": "Take my current goals and break them into concrete, actionable tasks",
-  "prioritize": "What should I work on next? Analyze my priorities and suggest the best task",
-  "analyze": "Analyze my productivity patterns this week - what can I improve?",
+  prioritize: "What should I work on next? Analyze my priorities and suggest the best task",
+  analyze: "Analyze my productivity patterns this week - what can I improve?",
 };
