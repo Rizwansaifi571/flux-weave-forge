@@ -1,400 +1,372 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/AppShell";
+import { PageHeader } from "@/components/PageHeader";
 import { GlassCard } from "@/components/GlassCard";
-import { useStore, type Priority, type Task } from "@/lib/store";
+import { AiCommandPanel } from "@/components/AiCommandPanel";
+import { AiQuickActions } from "@/components/AiQuickActions";
+import { AiCoachCard } from "@/components/AiCoachCard";
+import { PlanConfirmation, type GeneratedPlan } from "@/components/PlanConfirmation";
+import { useStore, type Priority } from "@/lib/store";
+import { parseCommand, generatePlanFromResponse, QUICK_ACTION_PROMPTS } from "@/lib/ai-utils";
+import { runAssistant } from "@/lib/ai/ai-engine.server";
 import { AnimatePresence, motion } from "framer-motion";
-import {
-  Plus, Search, Trash2, CheckCircle2, Circle, Calendar, Tag, Flame, Clock,
-  TrendingUp, Sparkles, FolderKanban, Edit2, X, AlertCircle,
-  List, Columns, MoreHorizontal, RotateCcw, Timer, Zap, Target, BarChart3
-} from "lucide-react";
-import { useMemo, useState, useCallback, useEffect, useRef } from "react";
+import { Plus, Search, Trash2, CheckCircle2, Circle, Calendar, Tag, Flame, Clock } from "lucide-react";
+import { useMemo, useState, useCallback } from "react";
 
 export const Route = createFileRoute("/tasks")({ component: TasksPage });
 
-// ---------- Constants ----------
-const todayStr = new Date().toISOString().slice(0, 10);
-const priorityConfig = {
-  high: { color: "bg-neon-pink", label: "High", icon: AlertCircle },
-  medium: { color: "bg-neon-purple", label: "Medium", icon: Circle },
-  low: { color: "bg-neon-blue", label: "Low", icon: Circle },
-} as const;
-
-type ViewMode = "list" | "board";
-type FilterType = "all" | "today" | "pending" | "done" | "high";
-type EnergyLevel = "low" | "medium" | "high";
-
-// ---------- Helper Components ----------
-
-// Animated progress ring
-function ProgressRing({ progress, size = 80, strokeWidth = 6 }: { progress: number; size?: number; strokeWidth?: number }) {
-  const radius = (size - strokeWidth) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const offset = circumference - (progress / 100) * circumference;
-  return (
-    <svg width={size} height={size} className="transform -rotate-90">
-      <circle cx={size / 2} cy={size / 2} r={radius} fill="transparent" stroke="rgba(255,255,255,0.1)" strokeWidth={strokeWidth} />
-      <motion.circle
-        cx={size / 2} cy={size / 2} r={radius} fill="transparent"
-        stroke="url(#gradient)"
-        strokeWidth={strokeWidth}
-        strokeLinecap="round"
-        strokeDasharray={circumference}
-        initial={{ strokeDashoffset: circumference }}
-        animate={{ strokeDashoffset: offset }}
-        transition={{ duration: 0.8, ease: "easeOut" }}
-      />
-      <defs>
-        <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" stopColor="#a855f7" />
-          <stop offset="100%" stopColor="#22d3ee" />
-        </linearGradient>
-      </defs>
-    </svg>
-  );
-}
-
-// Weekly chart (simple SVG bars)
-function WeeklyChart({ completedByDay }: { completedByDay: number[] }) {
-  const max = Math.max(...completedByDay, 1);
-  const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-  return (
-    <div className="flex items-end gap-1 h-16">
-      {completedByDay.map((val, i) => (
-        <div key={i} className="flex-1 flex flex-col items-center">
-          <motion.div
-            className="w-full rounded-t bg-gradient-to-t from-neon-purple to-neon-cyan"
-            initial={{ height: 0 }}
-            animate={{ height: `${(val / max) * 100}%` }}
-            style={{ minHeight: val > 0 ? "4px" : "0" }}
-          />
-          <span className="text-[9px] mt-1 text-muted-foreground">{days[i]}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// Quick Add form
-function QuickAddForm({ onClose }: { onClose: () => void }) {
-  const { addTask } = useStore();
+function TasksPage() {
+  const { tasks, addTask, batchAddTasks, toggleTask, deleteTask, addAssistantMessage, streakCount, xp } = useStore();
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filter, setFilter] = useState<"all" | "today" | "pending" | "done" | "high">("all");
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [generatedPlan, setGeneratedPlan] = useState<GeneratedPlan | null>(null);
+  const [showPlanConfirmation, setShowPlanConfirmation] = useState(false);
+  
+  // Form fields
   const [title, setTitle] = useState("");
-  const [priority, setPriority] = useState<Priority>("medium");
-  const [energy, setEnergy] = useState<EnergyLevel>("medium");
-  const [dueDate, setDueDate] = useState("");
-  const [focusMinutes, setFocusMinutes] = useState(30);
+  const [description, setDescription] = useState("");
   const [category, setCategory] = useState("General");
   const [tagsInput, setTagsInput] = useState("");
+  const [priority, setPriority] = useState<Priority>("medium");
+  const [dueDate, setDueDate] = useState("");
+  const [dueTime, setDueTime] = useState("");
+  const [focusMinutes, setFocusMinutes] = useState(30);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!title.trim()) return;
-    addTask({
-      title: title.trim(),
-      priority,
-      energy,
-      focusMinutes: Math.min(480, Math.max(5, focusMinutes || 30)),
-      category: category.trim() || "General",
-      tags: tagsInput.split(",").map(t => t.trim()).filter(Boolean),
-      dueDate: dueDate || undefined,
-    });
-    setTitle("");
-    setPriority("medium");
-    setEnergy("medium");
-    setDueDate("");
-    setFocusMinutes(30);
-    onClose();
-  };
+  // Today's date for filtering
+  const today = new Date().toISOString().slice(0, 10);
 
-  return (
-    <motion.form
-      initial={{ opacity: 0, height: 0 }}
-      animate={{ opacity: 1, height: "auto" }}
-      exit={{ opacity: 0, height: 0 }}
-      onSubmit={handleSubmit}
-      className="space-y-3 overflow-hidden"
-    >
-      <div className="flex gap-2 items-center">
-        <div className="h-10 w-10 grid place-items-center rounded-xl bg-gradient-primary glow-soft">
-          <Plus className="h-4 w-4 text-white" />
-        </div>
-        <input
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="What's your mission?"
-          className="flex-1 bg-transparent outline-none text-sm placeholder:text-muted-foreground font-medium"
-          autoFocus
-        />
-        <button type="submit" className="rounded-xl bg-gradient-primary px-4 py-2 text-xs font-medium text-white glow-soft hover:opacity-90 transition">
-          Add
-        </button>
-      </div>
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-        <select value={priority} onChange={(e) => setPriority(e.target.value as Priority)} className="glass rounded-lg px-2 py-1.5 text-xs outline-none">
-          <option value="low">Low Priority</option>
-          <option value="medium">Medium Priority</option>
-          <option value="high">High Priority</option>
-        </select>
-        <select value={energy} onChange={(e) => setEnergy(e.target.value as EnergyLevel)} className="glass rounded-lg px-2 py-1.5 text-xs outline-none">
-          <option value="low">Low Energy</option>
-          <option value="medium">Medium Energy</option>
-          <option value="high">High Energy</option>
-        </select>
-        <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="glass rounded-lg px-2 py-1.5 text-xs outline-none" />
-        <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Category" className="glass rounded-lg px-2 py-1.5 text-xs outline-none" />
-        <input value={tagsInput} onChange={(e) => setTagsInput(e.target.value)} placeholder="Tags (csv)" className="glass rounded-lg px-2 py-1.5 text-xs outline-none" />
-        <div className="flex items-center gap-1">
-          <Clock className="h-3 w-3 text-muted-foreground" />
-          <input type="number" min={5} max={480} value={focusMinutes} onChange={(e) => setFocusMinutes(Number(e.target.value))} className="glass w-16 rounded-lg px-2 py-1.5 text-xs outline-none" />
-          <span className="text-[10px] text-muted-foreground">min</span>
-        </div>
-      </div>
-    </motion.form>
-  );
-}
-
-// Task card (list & board)
-function TaskCard({ task, onToggle, onDelete, onEdit, compact = false }: { task: Task & { energy?: EnergyLevel }; onToggle: () => void; onDelete: () => void; onEdit: () => void; compact?: boolean }) {
-  return (
-    <motion.div
-      layout
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.95 }}
-      whileHover={{ scale: 1.01 }}
-      className={`group glass rounded-xl p-3 flex items-center gap-3 cursor-pointer transition ${task.completed ? "opacity-70" : ""}`}
-      onClick={(e) => {
-        if ((e.target as HTMLElement).closest("button, input")) return;
-        onEdit();
-      }}
-    >
-      <button onClick={onToggle} className="shrink-0">
-        {task.completed ? <CheckCircle2 className="h-5 w-5 text-neon-cyan" /> : <Circle className="h-5 w-5 text-muted-foreground hover:text-neon-purple transition" />}
-      </button>
-      <div className={`h-8 w-1 rounded-full ${priorityConfig[task.priority].color}`} />
-      <div className="flex-1 min-w-0">
-        <div className={`font-medium text-sm ${task.completed ? "line-through text-muted-foreground" : ""}`}>{task.title}</div>
-        {!compact && (
-          <div className="flex flex-wrap items-center gap-2 mt-1 text-xs text-muted-foreground">
-            {task.energy && (
-              <span className="flex items-center gap-1"><Zap className="h-3 w-3" /> {task.energy}</span>
-            )}
-            {task.dueDate && (
-              <span className={`flex items-center gap-1 ${task.dueDate < todayStr && !task.completed ? "text-neon-pink" : ""}`}><Calendar className="h-3 w-3" /> {task.dueDate}</span>
-            )}
-            <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {task.focusMinutes}m</span>
-            {task.tags?.slice(0, 2).map(t => <span key={t} className="glass px-1.5 py-0.5 rounded-full text-[10px]">#{t}</span>)}
-          </div>
-        )}
-      </div>
-      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
-        <button onClick={onDelete} className="p-1 text-muted-foreground hover:text-neon-pink"><Trash2 className="h-3.5 w-3.5" /></button>
-      </div>
-    </motion.div>
-  );
-}
-
-// ---------- Main Page ----------
-function TasksPage() {
-  const { tasks, addTask, toggleTask, deleteTask, updateTask } = useStore();
-  const [viewMode, setViewMode] = useState<ViewMode>("list");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [filter, setFilter] = useState<FilterType>("all");
-  const [showQuickAdd, setShowQuickAdd] = useState(false);
-
-  // ---------- Stats ----------
-  const stats = useMemo(() => {
-    const total = tasks.length;
-    const completed = tasks.filter(t => t.completed).length;
-    const pending = total - completed;
-    const todayTasks = tasks.filter(t => t.dueDate === todayStr);
-    const completedToday = todayTasks.filter(t => t.completed).length;
-    const overdue = tasks.filter(t => t.dueDate && t.dueDate < todayStr && !t.completed).length;
-    const completionRate = total ? Math.round((completed / total) * 100) : 0;
-    const streak = (() => {
-      let s = 0; const dates = new Set(tasks.filter(t => t.completed && t.dueDate).map(t => t.dueDate));
-      let d = new Date(); d.setHours(0, 0, 0, 0);
-      while (dates.has(d.toISOString().slice(0, 10))) { s++; d.setDate(d.getDate() - 1); }
-      return s;
-    })();
-    // Weekly chart data (last 7 days, Mon=0..Sun=6)
-    const weekly = new Array(7).fill(0);
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(); d.setDate(d.getDate() - (6 - i));
-      const ds = d.toISOString().slice(0, 10);
-      weekly[i] = tasks.filter(t => t.completed && t.dueDate === ds).length;
-    }
-    return { total, completed, pending, completedToday, todayTotal: todayTasks.length, overdue, completionRate, streak, weekly };
-  }, [tasks]);
-
-  // AI‑style insight (simple heuristic)
-  const insight = useMemo(() => {
-    if (stats.overdue > 3) return "You have multiple overdue tasks. Focus on the oldest first to regain momentum.";
-    if (stats.completionRate >= 80) return "You're crushing it! Keep the momentum by tackling high‑energy tasks in the morning.";
-    if (stats.streak >= 5) return `${stats.streak}-day streak! Consistency is your superpower.`;
-    return "Start with a quick win to build momentum.";
-  }, [stats]);
-
-  // ---------- Filtering / grouping ----------
+  // Memoized filtered tasks
   const filteredTasks = useMemo(() => {
-    return tasks.filter(task => {
-      if (searchQuery && !task.title.toLowerCase().includes(searchQuery.toLowerCase()) &&
-          !task.tags?.some(t => t.toLowerCase().includes(searchQuery.toLowerCase()))) return false;
+    return tasks.filter((task) => {
+      // Search filter
+      if (searchQuery && !task.title.toLowerCase().includes(searchQuery.toLowerCase())) {
+        return false;
+      }
+      // Status filters
       switch (filter) {
-        case "today": return task.dueDate === todayStr;
-        case "pending": return !task.completed;
-        case "done": return task.completed;
-        case "high": return task.priority === "high";
-        default: return true;
+        case "today":
+          return task.dueDate === today;
+        case "pending":
+          return !task.completed;
+        case "done":
+          return task.completed;
+        case "high":
+          return task.priority === "high";
+        default:
+          return true;
       }
     });
-  }, [tasks, searchQuery, filter]);
+  }, [tasks, searchQuery, filter, today]);
 
-  const { overdue, rest } = useMemo(() => {
-    const overdueTasks = filteredTasks.filter(t => t.dueDate && t.dueDate < todayStr && !t.completed);
-    const restTasks = filteredTasks.filter(t => !overdueTasks.includes(t));
-    return { overdue: overdueTasks, rest: restTasks };
-  }, [filteredTasks]);
+  // Parse tags from comma-separated string
+  const parsedTags = useMemo(() => {
+    return tagsInput
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
+  }, [tagsInput]);
 
-  // Grouping for list view (by category)
-  const grouped = useMemo(() => {
-    const groups: Record<string, Task[]> = {};
-    rest.forEach(task => {
-      const key = task.category || "Uncategorized";
-      if (!groups[key]) groups[key] = [];
-      groups[key].push(task);
+  // Handle form submission
+  const handleSubmit = useCallback(
+    (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!title.trim()) return;
+
+      // Validate and clamp focus minutes
+      let validFocusMinutes = Math.min(480, Math.max(5, Number(focusMinutes)));
+      if (isNaN(validFocusMinutes)) validFocusMinutes = 30;
+
+      addTask({
+        title: title.trim(),
+        description: description.trim() || undefined,
+        priority,
+        tags: parsedTags,
+        focusMinutes: validFocusMinutes,
+        category: category.trim() || "General",
+        dueDate: dueDate || undefined,
+        dueTime: dueTime || undefined,
+      });
+
+      // Reset form fields (optional but improves UX)
+      setTitle("");
+      setDescription("");
+      setCategory("General");
+      setTagsInput("");
+      setPriority("medium");
+      setDueDate("");
+      setDueTime("");
+      setFocusMinutes(30);
+    },
+    [title, description, priority, parsedTags, focusMinutes, category, dueDate, dueTime, addTask]
+  );
+
+  // Priority color mapping
+  const priorityColor = (p: Priority) => {
+    switch (p) {
+      case "high": return "bg-neon-pink";
+      case "medium": return "bg-neon-purple";
+      default: return "bg-neon-blue";
+    }
+  };
+
+  // Handle AI command submission
+  const handleAiCommand = useCallback(
+    async (command: string) => {
+      setIsProcessing(true);
+      addAssistantMessage({ role: "user", text: command });
+
+      try {
+        // For now, mock the AI response - integrate Groq when ready
+        const mockPlan: GeneratedPlan = {
+          title: extractGoalFromCommand(command),
+          items: [
+            { phase: "Week 1: Foundation", description: "Setup and basics", taskCount: 5 },
+            { phase: "Week 2-3: Core", description: "Main content", taskCount: 8 },
+            { phase: "Week 4-5: Advanced", description: "Complex topics", taskCount: 7 },
+            { phase: "Week 6: Practice", description: "Revision & practice", taskCount: 5 },
+          ],
+          totalTasks: 25,
+          duration: "6 weeks",
+          estimatedCommitment: "2-3 hours/day",
+        };
+
+        setGeneratedPlan(mockPlan);
+        setShowPlanConfirmation(true);
+
+        addAssistantMessage({
+          role: "ai",
+          text: `I've created a plan for: ${mockPlan.title}\n\n${mockPlan.totalTasks} tasks across ${mockPlan.items.length} phases.\n\nReady to generate these tasks?`,
+        });
+      } catch (error) {
+        addAssistantMessage({
+          role: "ai",
+          text: "Sorry, I encountered an error processing your request. Please try again.",
+        });
+      } finally {
+        setIsProcessing(false);
+      }
+    },
+    [addAssistantMessage]
+  );
+
+  // Handle quick action clicks
+  const handleQuickAction = useCallback(
+    async (action: string) => {
+      const prompt = QUICK_ACTION_PROMPTS[action] || "Plan my day";
+      await handleAiCommand(prompt);
+    },
+    [handleAiCommand]
+  );
+
+  // Confirm and generate plan
+  const handleConfirmPlan = useCallback(() => {
+    if (!generatedPlan) return;
+
+    const newTasks = generatedPlan.items.flatMap((item, phaseIdx) => {
+      const tasks = [];
+      const taskCount = item.taskCount || 3;
+
+      for (let i = 0; i < taskCount; i++) {
+        const daysOffset = phaseIdx * 7 + i;
+        const dueDate = new Date();
+        dueDate.setDate(dueDate.getDate() + daysOffset);
+
+        tasks.push({
+          title: `${item.phase} - Task ${i + 1}`,
+          description: item.description,
+          priority: "medium" as Priority,
+          tags: ["ai-generated"],
+          focusMinutes: 45,
+          category: generatedPlan.title,
+          dueDate: dueDate.toISOString().slice(0, 10),
+        });
+      }
+      return tasks;
     });
-    return groups;
-  }, [rest]);
 
-  // Board columns (Kanban by category)
-  const boardCols = useMemo(() => {
-    const cols: Record<string, Task[]> = {};
-    filteredTasks.forEach(task => {
-      const key = task.category || "Uncategorized";
-      if (!cols[key]) cols[key] = [];
-      cols[key].push(task);
+    batchAddTasks(newTasks);
+    addAssistantMessage({
+      role: "ai",
+      text: `✅ Generated ${newTasks.length} tasks for "${generatedPlan.title}". Start with the first task on your dashboard!`,
     });
-    return cols;
-  }, [filteredTasks]);
+
+    setShowPlanConfirmation(false);
+    setGeneratedPlan(null);
+  }, [generatedPlan, batchAddTasks, addAssistantMessage]);
+
+  // Extract goal title from command
+  function extractGoalFromCommand(command: string): string {
+    const patterns = [
+      /(?:complete|finish|learn|build)\s+(.+?)\s+(?:in|by|within)/i,
+      /(?:complete|finish|learn|build)\s+(.+)$/i,
+    ];
+
+    for (const pattern of patterns) {
+      const match = command.match(pattern);
+      if (match) return match[1].trim();
+    }
+
+    return "Generated Plan";
+  }
+
+  // Calculate completion stats
+  const completedCount = tasks.filter((t) => t.completed).length;
+  const completionRate = tasks.length > 0 ? Math.round((completedCount / tasks.length) * 100) : 0;
 
   return (
     <AppShell>
-      <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6">
-        {/* ---------- Mission Header ---------- */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <GlassCard className="p-5 flex items-center gap-6">
-            <div className="relative">
-              <ProgressRing progress={stats.todayTotal ? (stats.completedToday / stats.todayTotal) * 100 : 0} size={80} />
-              <span className="absolute inset-0 flex items-center justify-center text-sm font-bold">
-                {stats.todayTotal ? Math.round((stats.completedToday / stats.todayTotal) * 100) : 0}%
-              </span>
-            </div>
-            <div>
-              <h2 className="text-lg font-bold">Today's Mission</h2>
-              <p className="text-sm text-muted-foreground">{stats.completedToday} of {stats.todayTotal} completed</p>
-              <div className="mt-1 flex items-center gap-2 text-xs">
-                <span className="flex items-center gap-1"><Flame className="h-3 w-3 text-orange-400" /> {stats.streak} day streak</span>
-                <span className="flex items-center gap-1 text-neon-pink"><AlertCircle className="h-3 w-3" /> {stats.overdue} overdue</span>
-              </div>
-            </div>
-          </GlassCard>
-          <GlassCard className="p-5">
-            <h3 className="text-sm font-semibold text-muted-foreground uppercase mb-2">This Week</h3>
-            <WeeklyChart completedByDay={stats.weekly} />
-          </GlassCard>
-          <GlassCard className="p-5">
-            <div className="flex items-center gap-2 mb-2">
-              <Sparkles className="h-4 w-4 text-neon-purple" />
-              <span className="text-sm font-semibold">AI Coach</span>
-            </div>
-            <p className="text-xs text-muted-foreground">{insight}</p>
-            <div className="mt-3 flex gap-2 text-[10px]">
-              <span className="glass px-2 py-1 rounded-full">⏰ Best time: morning</span>
-              <span className="glass px-2 py-1 rounded-full">⚡ High energy tasks first</span>
-            </div>
-          </GlassCard>
-        </div>
+      <div className="p-8 max-w-6xl mx-auto">
+        <PageHeader title="Tasks" subtitle="Manage your missions. Drag energy into action." />
 
-        {/* ---------- Overdue Section (always visible if any) ---------- */}
-        {overdue.length > 0 && (
-          <div className="space-y-2">
-            <div className="flex items-center gap-2 text-sm font-bold text-neon-pink">
-              <AlertCircle className="h-4 w-4" />
-              Overdue ({overdue.length})
-            </div>
-            <div className="space-y-2">
-              {overdue.map(task => (
-                <TaskCard key={task.id} task={task as any} onToggle={() => toggleTask(task.id)} onDelete={() => deleteTask(task.id)} onEdit={() => {}} />
-              ))}
-            </div>
-          </div>
-        )}
+        {/* AI Command Panel */}
+        <AiCommandPanel onSubmit={handleAiCommand} isLoading={isProcessing} />
 
-        {/* ---------- Toolbar ---------- */}
-        <div className="flex flex-wrap items-center gap-3">
+        {/* Quick Actions */}
+        <AiQuickActions onAction={handleQuickAction} isLoading={isProcessing} />
+
+        {/* AI Coach Card */}
+        <AiCoachCard
+          completionRate={completionRate}
+          mostProductiveHour="8 PM - 11 PM"
+          weakArea="Theory Revision"
+          suggestion="You completed 4/5 theory tasks last week. Schedule CN before DSA tonight."
+          tasksCompletedThisWeek={completedCount}
+        />
+
+        {/* Traditional Add Task Form - Compact Version */}
+        <GlassCard className="mb-6 p-4 opacity-75 hover:opacity-100 transition">
+          <form onSubmit={handleSubmit} className="grid gap-2">
+            <p className="text-xs text-muted-foreground mb-2">Or add a quick task manually:</p>
+            <div className="flex gap-2 items-center">
+              <input
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="Quick task..."
+                className="flex-1 bg-transparent outline-none text-sm placeholder:text-muted-foreground"
+              />
+              <select
+                value={priority}
+                onChange={(e) => setPriority(e.target.value as Priority)}
+                className="glass rounded-lg px-3 py-1.5 text-xs outline-none"
+                aria-label="Priority"
+              >
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+              <button
+                type="submit"
+                className="rounded-lg bg-gradient-primary px-4 py-2 text-xs font-medium text-white glow-soft hover:opacity-90 transition"
+              >
+                Add
+              </button>
+            </div>
+          </form>
+        </GlassCard>
+
+        {/* Search & Filters */}
+        <div className="flex items-center gap-3 mb-4 flex-wrap">
           <div className="glass rounded-xl px-3 py-2 flex items-center gap-2 flex-1 min-w-[200px]">
             <Search className="h-4 w-4 text-muted-foreground" />
-            <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search tasks..." className="bg-transparent outline-none text-sm flex-1" />
+            <input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search tasks..."
+              className="bg-transparent outline-none text-sm flex-1"
+            />
           </div>
-          <div className="flex gap-1">
-            {(["all", "today", "pending", "done", "high"] as FilterType[]).map(f => (
-              <button key={f} onClick={() => setFilter(f)} className={`px-3 py-1.5 rounded-lg text-xs capitalize ${filter === f ? "bg-gradient-primary text-white glow-soft" : "glass text-muted-foreground hover:text-foreground"}`}>{f}</button>
-            ))}
-          </div>
-          <div className="glass rounded-lg flex p-0.5">
-            <button onClick={() => setViewMode("list")} className={`p-1.5 rounded-md ${viewMode === "list" ? "bg-white/10" : ""}`}><List className="h-4 w-4" /></button>
-            <button onClick={() => setViewMode("board")} className={`p-1.5 rounded-md ${viewMode === "board" ? "bg-white/10" : ""}`}><Columns className="h-4 w-4" /></button>
-          </div>
-          <button onClick={() => setShowQuickAdd(prev => !prev)} className="flex items-center gap-1 rounded-xl bg-gradient-primary px-3 py-2 text-xs font-medium text-white glow-soft">
-            <Plus className="h-3.5 w-3.5" /> Quick Add
-          </button>
+          {(["all", "today", "pending", "done", "high"] as const).map((f) => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className={`px-3 py-1.5 rounded-lg text-xs capitalize transition ${
+                filter === f
+                  ? "bg-gradient-primary text-white glow-soft"
+                  : "glass text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {f}
+            </button>
+          ))}
         </div>
 
-        {/* ---------- Quick Add Form (expandable) ---------- */}
-        <AnimatePresence>
-          {showQuickAdd && (
-            <GlassCard className="p-4">
-              <QuickAddForm onClose={() => setShowQuickAdd(false)} />
-            </GlassCard>
+        {/* Task List */}
+        <div className="space-y-2">
+          <AnimatePresence mode="popLayout">
+            {filteredTasks.map((task) => (
+              <motion.div
+                key={task.id}
+                layout
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                whileHover={{ scale: 1.005 }}
+                className="glass rounded-xl p-4 flex items-center gap-4 group"
+              >
+                <button onClick={() => toggleTask(task.id)} className="shrink-0">
+                  {task.completed ? (
+                    <CheckCircle2 className="h-5 w-5 text-neon-cyan" />
+                  ) : (
+                    <Circle className="h-5 w-5 text-muted-foreground hover:text-neon-purple transition" />
+                  )}
+                </button>
+                <div className={`h-8 w-1 rounded-full ${priorityColor(task.priority)}`} />
+                <div className="flex-1 min-w-0">
+                  <div className={`font-medium text-sm ${task.completed ? "line-through text-muted-foreground" : ""}`}>
+                    {task.title}
+                  </div>
+                  {task.description && (
+                    <div className="text-xs text-muted-foreground mt-0.5 truncate">{task.description}</div>
+                  )}
+                </div>
+                <div className="hidden sm:flex items-center gap-3 text-xs text-muted-foreground">
+                  {task.dueDate && (
+                    <span className="flex items-center gap-1">
+                      <Calendar className="h-3 w-3" />
+                      {task.dueDate}
+                    </span>
+                  )}
+                  {task.dueTime && (
+                    <span className="flex items-center gap-1">
+                      <Clock className="h-3 w-3" />
+                      {task.dueTime}
+                    </span>
+                  )}
+                  <span className="flex items-center gap-1">
+                    <Flame className="h-3 w-3" />
+                    {task.focusMinutes}m
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <Tag className="h-3 w-3" />
+                    {task.category}
+                  </span>
+                </div>
+                <button
+                  onClick={() => deleteTask(task.id)}
+                  className="opacity-0 group-hover:opacity-100 transition text-muted-foreground hover:text-neon-pink"
+                  aria-label="Delete task"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+          {filteredTasks.length === 0 && (
+            <div className="text-center text-sm text-muted-foreground py-16">
+              No tasks match. Time to create one.
+            </div>
           )}
-        </AnimatePresence>
+        </div>
 
-        {/* ---------- Task View ---------- */}
-        {viewMode === "list" ? (
-          <div className="space-y-6">
-            {Object.entries(grouped).map(([cat, tasks]) => (
-              <div key={cat}>
-                <div className="flex items-center gap-2 mb-2 text-sm font-semibold text-muted-foreground uppercase">
-                  <div className="h-px flex-1 bg-white/10" />
-                  {cat}
-                  <div className="h-px flex-1 bg-white/10" />
-                </div>
-                <div className="space-y-2">
-                  {tasks.map(task => (
-                    <TaskCard key={task.id} task={task as any} onToggle={() => toggleTask(task.id)} onDelete={() => deleteTask(task.id)} onEdit={() => {}} />
-                  ))}
-                </div>
-              </div>
-            ))}
-            {filteredTasks.length === 0 && (
-              <div className="text-center py-12 text-muted-foreground">No missions found. Create your first one!</div>
-            )}
-          </div>
-        ) : (
-          <div className="flex gap-4 overflow-x-auto pb-4">
-            {Object.entries(boardCols).map(([col, tasks]) => (
-              <div key={col} className="flex-1 min-w-[250px] glass rounded-xl p-4">
-                <h3 className="font-semibold text-sm mb-3">{col} ({tasks.length})</h3>
-                <div className="space-y-2">
-                  {tasks.map(task => (
-                    <TaskCard key={task.id} task={task as any} onToggle={() => toggleTask(task.id)} onDelete={() => deleteTask(task.id)} onEdit={() => {}} compact />
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+        {/* Plan Confirmation Modal */}
+        <PlanConfirmation
+          plan={generatedPlan}
+          isOpen={showPlanConfirmation}
+          isLoading={isProcessing}
+          onConfirm={handleConfirmPlan}
+          onCancel={() => setShowPlanConfirmation(false)}
+        />
       </div>
     </AppShell>
   );
