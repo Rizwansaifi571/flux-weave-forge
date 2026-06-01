@@ -156,6 +156,7 @@ interface State {
   userName: string;
 
   addTask: (t: Omit<Task, "id" | "createdAt" | "completed">) => void;
+  batchAddTasks: (tasks: Omit<Task, "id" | "createdAt" | "completed">[]) => void;
   toggleTask: (id: string) => void;
   deleteTask: (id: string) => void;
   updateTask: (id: string, patch: Partial<Task>) => void;
@@ -265,6 +266,12 @@ export const useStore = create<State>()(
 
       addTask: (t) => set((s) => ({
         tasks: [{ ...t, id: uid(), completed: false, createdAt: new Date().toISOString() }, ...s.tasks],
+      })),
+      batchAddTasks: (tasks) => set((s) => ({
+        tasks: [
+          ...tasks.map((t) => ({ ...t, id: uid(), completed: false, createdAt: new Date().toISOString() })),
+          ...s.tasks,
+        ],
       })),
       toggleTask: (id) => set((s) => {
         const tasks = s.tasks.map((t) => t.id === id ? { ...t, completed: !t.completed, completedAt: !t.completed ? new Date().toISOString() : undefined } : t);

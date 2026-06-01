@@ -2,7 +2,13 @@ import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/AppShell";
 import { PageHeader } from "@/components/PageHeader";
 import { GlassCard } from "@/components/GlassCard";
+import { AiCommandPanel } from "@/components/AiCommandPanel";
+import { AiQuickActions } from "@/components/AiQuickActions";
+import { AiCoachCard } from "@/components/AiCoachCard";
+import { PlanConfirmation, type GeneratedPlan } from "@/components/PlanConfirmation";
 import { useStore, type Priority } from "@/lib/store";
+import { parseCommand, generatePlanFromResponse, QUICK_ACTION_PROMPTS } from "@/lib/ai-utils";
+import { runAssistant } from "@/lib/ai/ai-engine.server";
 import { AnimatePresence, motion } from "framer-motion";
 import { Plus, Search, Trash2, CheckCircle2, Circle, Calendar, Tag, Flame, Clock } from "lucide-react";
 import { useMemo, useState, useCallback } from "react";
@@ -10,9 +16,12 @@ import { useMemo, useState, useCallback } from "react";
 export const Route = createFileRoute("/tasks")({ component: TasksPage });
 
 function TasksPage() {
-  const { tasks, addTask, toggleTask, deleteTask } = useStore();
+  const { tasks, addTask, batchAddTasks, toggleTask, deleteTask, addAssistantMessage, streakCount, xp } = useStore();
   const [searchQuery, setSearchQuery] = useState("");
   const [filter, setFilter] = useState<"all" | "today" | "pending" | "done" | "high">("all");
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [generatedPlan, setGeneratedPlan] = useState<GeneratedPlan | null>(null);
+  const [showPlanConfirmation, setShowPlanConfirmation] = useState(false);
   
   // Form fields
   const [title, setTitle] = useState("");
@@ -101,24 +110,140 @@ function TasksPage() {
     }
   };
 
+  // Handle AI command submission
+  const handleAiCommand = useCallback(
+    async (command: string) => {
+      setIsProcessing(true);
+      addAssistantMessage({ role: "user", text: command });
+
+      try {
+        // For now, mock the AI response - integrate Groq when ready
+        const mockPlan: GeneratedPlan = {
+          title: extractGoalFromCommand(command),
+          items: [
+            { phase: "Week 1: Foundation", description: "Setup and basics", taskCount: 5 },
+            { phase: "Week 2-3: Core", description: "Main content", taskCount: 8 },
+            { phase: "Week 4-5: Advanced", description: "Complex topics", taskCount: 7 },
+            { phase: "Week 6: Practice", description: "Revision & practice", taskCount: 5 },
+          ],
+          totalTasks: 25,
+          duration: "6 weeks",
+          estimatedCommitment: "2-3 hours/day",
+        };
+
+        setGeneratedPlan(mockPlan);
+        setShowPlanConfirmation(true);
+
+        addAssistantMessage({
+          role: "ai",
+          text: `I've created a plan for: ${mockPlan.title}\n\n${mockPlan.totalTasks} tasks across ${mockPlan.items.length} phases.\n\nReady to generate these tasks?`,
+        });
+      } catch (error) {
+        addAssistantMessage({
+          role: "ai",
+          text: "Sorry, I encountered an error processing your request. Please try again.",
+        });
+      } finally {
+        setIsProcessing(false);
+      }
+    },
+    [addAssistantMessage]
+  );
+
+  // Handle quick action clicks
+  const handleQuickAction = useCallback(
+    async (action: string) => {
+      const prompt = QUICK_ACTION_PROMPTS[action] || "Plan my day";
+      await handleAiCommand(prompt);
+    },
+    [handleAiCommand]
+  );
+
+  // Confirm and generate plan
+  const handleConfirmPlan = useCallback(() => {
+    if (!generatedPlan) return;
+
+    const newTasks = generatedPlan.items.flatMap((item, phaseIdx) => {
+      const tasks = [];
+      const taskCount = item.taskCount || 3;
+
+      for (let i = 0; i < taskCount; i++) {
+        const daysOffset = phaseIdx * 7 + i;
+        const dueDate = new Date();
+        dueDate.setDate(dueDate.getDate() + daysOffset);
+
+        tasks.push({
+          title: `${item.phase} - Task ${i + 1}`,
+          description: item.description,
+          priority: "medium" as Priority,
+          tags: ["ai-generated"],
+          focusMinutes: 45,
+          category: generatedPlan.title,
+          dueDate: dueDate.toISOString().slice(0, 10),
+        });
+      }
+      return tasks;
+    });
+
+    batchAddTasks(newTasks);
+    addAssistantMessage({
+      role: "ai",
+      text: `✅ Generated ${newTasks.length} tasks for "${generatedPlan.title}". Start with the first task on your dashboard!`,
+    });
+
+    setShowPlanConfirmation(false);
+    setGeneratedPlan(null);
+  }, [generatedPlan, batchAddTasks, addAssistantMessage]);
+
+  // Extract goal title from command
+  function extractGoalFromCommand(command: string): string {
+    const patterns = [
+      /(?:complete|finish|learn|build)\s+(.+?)\s+(?:in|by|within)/i,
+      /(?:complete|finish|learn|build)\s+(.+)$/i,
+    ];
+
+    for (const pattern of patterns) {
+      const match = command.match(pattern);
+      if (match) return match[1].trim();
+    }
+
+    return "Generated Plan";
+  }
+
+  // Calculate completion stats
+  const completedCount = tasks.filter((t) => t.completed).length;
+  const completionRate = tasks.length > 0 ? Math.round((completedCount / tasks.length) * 100) : 0;
+
   return (
     <AppShell>
       <div className="p-8 max-w-6xl mx-auto">
         <PageHeader title="Tasks" subtitle="Manage your missions. Drag energy into action." />
 
-        {/* Add Task Form */}
-        <GlassCard className="mb-6">
-          <form onSubmit={handleSubmit} className="grid gap-3">
+        {/* AI Command Panel */}
+        <AiCommandPanel onSubmit={handleAiCommand} isLoading={isProcessing} />
+
+        {/* Quick Actions */}
+        <AiQuickActions onAction={handleQuickAction} isLoading={isProcessing} />
+
+        {/* AI Coach Card */}
+        <AiCoachCard
+          completionRate={completionRate}
+          mostProductiveHour="8 PM - 11 PM"
+          weakArea="Theory Revision"
+          suggestion="You completed 4/5 theory tasks last week. Schedule CN before DSA tonight."
+          tasksCompletedThisWeek={completedCount}
+        />
+
+        {/* Traditional Add Task Form - Compact Version */}
+        <GlassCard className="mb-6 p-4 opacity-75 hover:opacity-100 transition">
+          <form onSubmit={handleSubmit} className="grid gap-2">
+            <p className="text-xs text-muted-foreground mb-2">Or add a quick task manually:</p>
             <div className="flex gap-2 items-center">
-              <div className="h-10 w-10 grid place-items-center rounded-xl bg-gradient-primary glow-soft">
-                <Plus className="h-4 w-4 text-white" />
-              </div>
               <input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="Add a new mission..."
+                placeholder="Quick task..."
                 className="flex-1 bg-transparent outline-none text-sm placeholder:text-muted-foreground"
-                required
               />
               <select
                 value={priority}
@@ -136,54 +261,6 @@ function TasksPage() {
               >
                 Add
               </button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-[1.2fr_0.8fr] gap-3">
-              <input
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="Short description (optional)"
-                className="glass rounded-lg px-3 py-2 text-xs outline-none"
-              />
-              <input
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                placeholder="Category (e.g. DSA, College, Fitness)"
-                className="glass rounded-lg px-3 py-2 text-xs outline-none"
-              />
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-[1fr_140px_140px_140px] gap-3">
-              <input
-                value={tagsInput}
-                onChange={(e) => setTagsInput(e.target.value)}
-                placeholder="Tags (comma separated)"
-                className="glass rounded-lg px-3 py-2 text-xs outline-none"
-              />
-              <input
-                type="date"
-                value={dueDate}
-                onChange={(e) => setDueDate(e.target.value)}
-                className="glass rounded-lg px-3 py-2 text-xs outline-none"
-                aria-label="Due date"
-              />
-              <input
-                type="time"
-                value={dueTime}
-                onChange={(e) => setDueTime(e.target.value)}
-                className="glass rounded-lg px-3 py-2 text-xs outline-none"
-                aria-label="Due time"
-              />
-              <input
-                type="number"
-                step={5}
-                min={5}
-                max={480}
-                value={focusMinutes}
-                onChange={(e) => setFocusMinutes(Number(e.target.value))}
-                className="glass rounded-lg px-3 py-2 text-xs outline-none"
-                aria-label="Focus minutes (5-480)"
-              />
             </div>
           </form>
         </GlassCard>
@@ -281,6 +358,15 @@ function TasksPage() {
             </div>
           )}
         </div>
+
+        {/* Plan Confirmation Modal */}
+        <PlanConfirmation
+          plan={generatedPlan}
+          isOpen={showPlanConfirmation}
+          isLoading={isProcessing}
+          onConfirm={handleConfirmPlan}
+          onCancel={() => setShowPlanConfirmation(false)}
+        />
       </div>
     </AppShell>
   );
