@@ -370,7 +370,10 @@ export const useStore = create<State>()(
       setWallpaper: (patch) => set((s) => ({ wallpaper: { ...s.wallpaper, ...patch } })),
       setUserName: (name) => set({ userName: name }),
     }),
-    { name: "walltask-ai-store" }
+    {
+      name: "walltask-ai-store",
+      skipHydration: true,
+    }
   )
 );
 

@@ -49,10 +49,10 @@ export function WallpaperPreview({ scale = 1 }: { scale?: number }) {
       <div className="relative h-full w-full text-white" style={{ padding: `${24 * scale}px` }}>
         <div className="flex justify-between items-start">
           <div>
-            <div style={{ fontSize: `${14 * scale}px`, opacity: 0.7 }}>
+            <div style={{ fontSize: `${14 * scale}px`, opacity: 0.7 }} suppressHydrationWarning>
               {new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
             </div>
-            <div style={{ fontSize: `${42 * scale}px`, fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 }}>
+            <div style={{ fontSize: `${42 * scale}px`, fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 }} suppressHydrationWarning>
               {new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
             </div>
             <div style={{ fontSize: `${12 * scale}px`, opacity: 0.6, marginTop: 4 }}>Hello, {userName}.</div>
@@ -107,7 +107,7 @@ export function WallpaperPreview({ scale = 1 }: { scale?: number }) {
 
         {wallpaper.showQuote && (
           <div className="absolute" style={{ right: `${24 * scale}px`, bottom: `${24 * scale}px`, maxWidth: "40%", textAlign: "right" }}>
-            <div style={{ fontSize: `${11 * scale}px`, fontStyle: "italic", opacity: 0.7 }}>"{quote}"</div>
+            <div style={{ fontSize: `${11 * scale}px`, fontStyle: "italic", opacity: 0.7 }} suppressHydrationWarning>"{quote}"</div>
           </div>
         )}
       </div>

@@ -20,6 +20,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { xp, level, streakCount } = useStore();
   const xpInLevel = xp % 500;
 
+  useEffect(() => {
+    // Defer persisted state hydration until after the server HTML has mounted.
+    void useStore.persist.rehydrate();
+  }, []);
+
   // Focus lock state (disabled navigation when true)
   const [focusLock, setFocusLock] = useState(false);
 

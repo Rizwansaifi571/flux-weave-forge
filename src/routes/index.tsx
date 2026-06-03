@@ -167,14 +167,17 @@
           <div className="flex flex-col lg:flex-row items-start lg:items-end justify-between gap-4 mb-8 flex-wrap">
             <div>
               <div className="text-xs uppercase tracking-[0.3em] text-muted-foreground mb-2">
-                {now.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
+                <span suppressHydrationWarning>
+                  {now.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
+                </span>
               </div>
               <motion.h1
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 className="text-4xl font-semibold tracking-tight"
               >
-                {greeting}, <span className="text-gradient">{userName}</span>
+                <span suppressHydrationWarning>{greeting}</span>,{" "}
+                <span className="text-gradient">{userName}</span>
               </motion.h1>
               <motion.p
                 initial={{ opacity: 0 }}
@@ -182,7 +185,7 @@
                 transition={{ delay: 0.1 }}
                 className="text-sm text-muted-foreground italic mt-2 max-w-xl"
               >
-                “{quote}”
+                <span suppressHydrationWarning>“{quote}”</span>
               </motion.p>
             </div>
             <GlassCard className="p-5 min-w-[220px]">
@@ -213,7 +216,9 @@
                     {productivityScore >= 80 ? "Elite mode" : productivityScore >= 50 ? "On track" : "Push harder"}
                   </div>
                   <div className="text-xs text-muted-foreground mt-0.5">
-                    {now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    <span suppressHydrationWarning>
+                      {now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    </span>
                   </div>
                 </div>
               </div>
