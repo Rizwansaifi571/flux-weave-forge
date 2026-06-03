@@ -6,9 +6,9 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
-    "postbuild": "node scripts/prepare-preview.mjs",
+    "postbuild": "node scripts/prepare-vercel-output.mjs",
     "build:dev": "vite build --mode development",
-    "preview": "vite preview --outDir .vercel/output/static",
+    "preview": "npx srvx --static .vercel/output/static .vercel/output/functions/__server.func/index.mjs",
     "lint": "eslint .",
     "format": "prettier --write ."
   },
