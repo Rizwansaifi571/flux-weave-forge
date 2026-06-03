@@ -6,8 +6,9 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
+    "postbuild": "node scripts/prepare-preview.mjs",
     "build:dev": "vite build --mode development",
-    "preview": "vite preview",
+    "preview": "vite preview --outDir .vercel/output/static",
     "lint": "eslint .",
     "format": "prettier --write ."
   },
