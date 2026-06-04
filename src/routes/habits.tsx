@@ -4,13 +4,14 @@ import { GlassCard } from "@/components/GlassCard";
 import { useStore, type Habit, type HabitCategory, type HabitDifficulty } from "@/lib/store";
 import { formatLocalDate, startOfLocalDay } from "@/lib/date";
 import { motion, AnimatePresence } from "framer-motion";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import {
-  Flame, TrendingUp, Calendar, Award, Zap,
-  Brain, Lightbulb, BarChart3, ListChecks, Filter, X, Edit2,
-  ChevronDown, ChevronRight, AlertTriangle, CheckCircle, Circle,
-  Target, Clock
+  Flame, TrendingUp, Award, Brain, Lightbulb, BarChart3, ListChecks,
+  X, Edit2, ChevronDown, ChevronRight, CheckCircle, Circle,
+  Target, Clock, Save, Trash2, MessageCircle, Send, RotateCcw, Plus, CalendarDays,
+  Sparkles, Check, AlertTriangle, TrendingDown, Zap, Calendar, Link2
 } from "lucide-react";
+import { askAssistant } from "@/lib/api/assistant.functions";
 
 export const Route = createFileRoute("/habits")({ component: HabitsPage });
 
@@ -19,24 +20,7 @@ const COLORS = ["neon-purple", "neon-blue", "neon-cyan", "neon-pink"];
 const CATEGORIES: HabitCategory[] = ["health", "learning", "career", "fitness", "spiritual", "personal"];
 const DIFFICULTIES: HabitDifficulty[] = ["easy", "medium", "hard"];
 
-const TEMPLATES = [
-  { name: "🚀 Placement Prep", habits: ["DSA", "Aptitude", "CS Fundamentals"], category: "learning", difficulty: "hard" },
-  { name: "🏋️ Fitness", habits: ["Workout", "Drink water", "Sleep 8h"], category: "fitness", difficulty: "medium" },
-  { name: "📚 Study Mode", habits: ["Revision", "Practice problems", "Reading"], category: "learning", difficulty: "medium" },
-];
-
-// ---------- Safe date helpers (no external dependencies) ----------
-function getLastNDays(n: number): string[] {
-  const days: string[] = [];
-  const today = new Date();
-  for (let i = n - 1; i >= 0; i--) {
-    const date = new Date(today);
-    date.setDate(today.getDate() - i);
-    days.push(formatLocalDate(date));
-  }
-  return days;
-}
-
+// ---------- Helper Functions ----------
 function getStreak(history: Record<string, boolean>, todayStr: string): number {
   let streak = 0;
   let cursor = startOfLocalDay();
@@ -52,282 +36,549 @@ function getCompletionRate(history: Record<string, boolean>, days: string[]): nu
   return days.length ? (completed / days.length) * 100 : 0;
 }
 
-function getHabitScore(habit: Habit, todayStr: string, last30Days: string[]): number {
+// Health score: 0-100 based on streak (40%), completion rate over last 30 days (40%), weekly consistency (20%)
+function getHealthScore(habit: Habit, todayStr: string, last30Days: string[], last7Days: string[]): number {
   const streak = getStreak(habit.history, todayStr);
-  const rate = getCompletionRate(habit.history, last30Days);
-  return Math.round((rate * 0.6) + (Math.min(streak, 100) * 0.4));
+  const rate30 = getCompletionRate(habit.history, last30Days);
+  const rate7 = getCompletionRate(habit.history, last7Days);
+  const streakScore = Math.min(100, streak * 4); // 25 days = 100
+  const score = (streakScore * 0.4) + (rate30 * 0.4) + (rate7 * 0.2);
+  return Math.round(Math.min(100, score));
 }
 
-function getPrediction(habit: Habit, todayStr: string): number {
-  const last7 = getLastNDays(7).slice(0, 6);
-  const completedCount = last7.filter(d => habit.history[d] === true).length;
-  const baseProb = (completedCount / 6) * 100;
-  const streak = getStreak(habit.history, todayStr);
-  return Math.min(100, Math.round(baseProb + (streak > 3 ? 10 : 0)));
-}
-
-function getBestTime(habit: Habit): string {
-  const hours = [6, 7, 8, 9, 12, 15, 18, 19, 20, 21, 22];
-  const idx = habit.name.length % hours.length;
-  return `${hours[idx]}:00`;
-}
-
-function getLongestStreak(history: Record<string, boolean>): number {
-  let max = 0, curr = 0;
-  for (const date of Object.keys(history).sort()) {
-    if (history[date]) curr++;
-    else { max = Math.max(max, curr); curr = 0; }
+// Risk prediction: probability of missing today based on last 7 days
+function getRiskPrediction(habit: Habit, todayStr: string): { risk: number; reason: string; recommendation: string } {
+  const last7 = [...Array(7)].map((_, i) => formatLocalDate(new Date(Date.now() - i * 24 * 60 * 60 * 1000)));
+  const misses = last7.filter(d => !habit.history[d]).length;
+  let risk = Math.round((misses / 7) * 100);
+  let reason = "";
+  let recommendation = "";
+  if (risk > 70) {
+    reason = `Missed ${misses} of last 7 days`;
+    recommendation = "Try moving this habit to your most productive time of day.";
+  } else if (risk > 40) {
+    reason = `Inconsistent lately`;
+    recommendation = "Set a specific reminder or link this habit to an existing routine.";
+  } else {
+    reason = `Consistent performer`;
+    recommendation = "Keep it up! You're building momentum.";
   }
-  return Math.max(max, curr);
+  return { risk, reason, recommendation };
 }
 
 // ---------- Components ----------
-function WeeklyMomentumChart({ habits, days }: { habits: Habit[]; days: string[] }) {
-  const weeklyData = days.slice(-7).map(day => ({
-    day: new Date(day).toLocaleDateString('en-US', { weekday: 'short' }),
-    completed: habits.filter(h => h.history[day] === true).length
-  }));
-  const max = Math.max(...weeklyData.map(d => d.completed), 1);
+function ProgressRing({ progress, size = 80, strokeWidth = 6 }: { progress: number; size?: number; strokeWidth?: number }) {
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (progress / 100) * circumference;
   return (
-    <div className="flex items-end gap-2 h-24">
-      {weeklyData.map((d, i) => (
-        <div key={i} className="flex-1 flex flex-col items-center">
-          <motion.div
-            className="w-full rounded-t bg-gradient-to-t from-neon-purple to-neon-cyan"
-            initial={{ height: 0 }}
-            animate={{ height: `${(d.completed / max) * 100}%` }}
-            style={{ minHeight: d.completed > 0 ? '4px' : '0' }}
-          />
-          <span className="text-[10px] mt-1 text-muted-foreground">{d.day}</span>
+    <svg width={size} height={size} className="transform -rotate-90">
+      <circle cx={size/2} cy={size/2} r={radius} fill="transparent" stroke="rgba(255,255,255,0.1)" strokeWidth={strokeWidth} />
+      <motion.circle cx={size/2} cy={size/2} r={radius} fill="transparent" stroke="url(#gradient)" strokeWidth={strokeWidth} strokeLinecap="round" strokeDasharray={circumference} initial={{ strokeDashoffset: circumference }} animate={{ strokeDashoffset: offset }} transition={{ duration: 0.6 }} />
+      <defs><linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stopColor="#a855f7" /><stop offset="100%" stopColor="#22d3ee" /></linearGradient></defs>
+    </svg>
+  );
+}
+
+// Expandable Habit Card
+function HabitCard({ habit, onToggle, onEdit, onDelete, onViewDetails, today, last30Days, last7Days }: any) {
+  const [expanded, setExpanded] = useState(false);
+  const streak = getStreak(habit.history, today);
+  const healthScore = getHealthScore(habit, today, last30Days, last7Days);
+  const { risk, reason, recommendation } = getRiskPrediction(habit, today);
+  const targetProgress = habit.targetDays ? (streak / habit.targetDays) * 100 : 0;
+  const daysLeft = habit.targetDays ? Math.max(0, habit.targetDays - streak) : null;
+  const noteForToday = habit.notes?.[today] || "";
+
+  return (
+    <GlassCard className="!p-0 overflow-hidden">
+      <div className="p-4 cursor-pointer hover:bg-white/5 transition" onClick={() => setExpanded(!expanded)}>
+        <div className="flex justify-between items-start">
+          <div className="flex items-center gap-4">
+            <span className="text-3xl">{habit.emoji}</span>
+            <div>
+              <div className="font-semibold text-lg">{habit.name}</div>
+              <div className="flex flex-wrap gap-4 text-xs text-muted-foreground mt-1">
+                <span className="flex items-center gap-1"><Flame className="h-3 w-3 text-orange-400"/> {streak} days</span>
+                <span className="flex items-center gap-1"><Award className="h-3 w-3 text-yellow-400"/> {healthScore}/100</span>
+                {habit.targetDays && <span className="flex items-center gap-1"><CalendarDays className="h-3 w-3 text-neon-cyan"/> {daysLeft} days left</span>}
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={(e) => { e.stopPropagation(); onToggle(); }} className="rounded-full p-1">
+              {habit.history[today] ? <CheckCircle className="h-6 w-6 text-neon-cyan"/> : <Circle className="h-6 w-6 text-white/40"/>}
+            </button>
+            <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="p-1 text-muted-foreground hover:text-neon-cyan"><Edit2 className="h-4 w-4"/></button>
+            {expanded ? <ChevronDown className="h-5 w-5"/> : <ChevronRight className="h-5 w-5"/>}
+          </div>
         </div>
-      ))}
-    </div>
+
+        {/* Collapsed extra info: health score bar */}
+        <div className="mt-3">
+          <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+            <motion.div className="h-full bg-gradient-to-r from-neon-cyan to-neon-purple" initial={{ width: 0 }} animate={{ width: `${healthScore}%` }} transition={{ duration: 0.5 }} />
+          </div>
+        </div>
+      </div>
+
+      <AnimatePresence>
+        {expanded && (
+          <motion.div initial={{height:0}} animate={{height:"auto"}} exit={{height:0}} className="border-t border-white/10 p-4 space-y-4">
+            {/* Target progress */}
+            {habit.targetDays && (
+              <div className="space-y-1">
+                <div className="flex justify-between text-sm"><span>Challenge Progress</span><span>{streak} / {habit.targetDays} days</span></div>
+                <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+                  <motion.div className="h-full bg-gradient-to-r from-neon-cyan to-neon-purple" animate={{ width: `${targetProgress}%` }} />
+                </div>
+              </div>
+            )}
+
+            {/* Risk prediction */}
+            {risk > 40 && (
+              <div className="glass p-3 rounded-lg bg-neon-pink/10 border border-neon-pink/20">
+                <div className="flex items-center gap-2 text-sm"><AlertTriangle className="h-4 w-4 text-yellow-400"/> Risk of breaking streak: {risk}%</div>
+                <p className="text-xs mt-1">⚠️ {reason}</p>
+                <p className="text-xs text-neon-cyan mt-1">💡 {recommendation}</p>
+              </div>
+            )}
+
+            <div className="flex flex-wrap gap-2 text-xs">
+              <span className="glass px-2 py-1 rounded-full">{habit.category}</span>
+              <span className="glass px-2 py-1 rounded-full">{habit.difficulty}</span>
+              <button onClick={() => onViewDetails()} className="text-neon-cyan underline">Full Details</button>
+              <button onClick={() => onDelete()} className="text-red-400 underline">Delete</button>
+            </div>
+
+            {/* Note input */}
+            <div className="flex items-center gap-2 pt-1">
+              <button onClick={() => {}} className="text-xs text-neon-cyan flex items-center gap-1"><Edit2 className="h-3 w-3"/> Add reflection</button>
+              {noteForToday && <span className="text-xs text-muted-foreground truncate max-w-[200px]">📝 {noteForToday}</span>}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </GlassCard>
   );
 }
 
-function ProgressBar({ current, target, unit }: { current: number; target: number; unit: string }) {
-  const percent = Math.min(100, (current / target) * 100);
+// Edit Habit Modal
+function EditHabitModal({ habit, onClose, onSave }: { habit: Habit; onClose: () => void; onSave: (updated: Partial<Habit>) => void }) {
+  const [name, setName] = useState(habit.name);
+  const [emoji, setEmoji] = useState(habit.emoji);
+  const [category, setCategory] = useState<HabitCategory>(habit.category || "personal");
+  const [difficulty, setDifficulty] = useState<HabitDifficulty>(habit.difficulty || "medium");
+  const [targetDays, setTargetDays] = useState(habit.targetDays || 0);
+  const [dueDate, setDueDate] = useState(habit.dueDate || "");
+
   return (
-    <div className="space-y-1">
-      <div className="flex justify-between text-xs">
-        <span>{current} / {target} {unit}</span>
-        <span>{Math.round(percent)}%</span>
-      </div>
-      <div className="h-2 bg-white/10 rounded-full overflow-hidden">
-        <motion.div
-          className="h-full bg-gradient-to-r from-neon-cyan to-neon-purple"
-          initial={{ width: 0 }}
-          animate={{ width: `${percent}%` }}
-          transition={{ duration: 0.5 }}
-        />
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="glass p-6 rounded-xl max-w-md w-full" onClick={e => e.stopPropagation()}>
+        <h3 className="text-xl font-bold mb-4">Edit Habit</h3>
+        <div className="space-y-3">
+          <div><label className="text-xs text-muted-foreground">Name</label><input value={name} onChange={e=>setName(e.target.value)} className="glass w-full rounded-lg p-2 text-sm" /></div>
+          <div><label className="text-xs text-muted-foreground">Emoji</label><input value={emoji} onChange={e=>setEmoji(e.target.value)} className="glass w-full rounded-lg p-2 text-sm" /></div>
+          <div><label className="text-xs text-muted-foreground">Category</label><select value={category} onChange={e=>setCategory(e.target.value as HabitCategory)} className="glass w-full rounded-lg p-2 text-sm">{CATEGORIES.map(c=><option key={c}>{c}</option>)}</select></div>
+          <div><label className="text-xs text-muted-foreground">Difficulty</label><select value={difficulty} onChange={e=>setDifficulty(e.target.value as HabitDifficulty)} className="glass w-full rounded-lg p-2 text-sm">{DIFFICULTIES.map(d=><option key={d}>{d}</option>)}</select></div>
+          <div><label className="text-xs text-muted-foreground">Target Days (0 = no target)</label><input type="number" value={targetDays} onChange={e=>setTargetDays(Number(e.target.value))} className="glass w-full rounded-lg p-2 text-sm" placeholder="e.g., 30 for a challenge" /></div>
+          <div><label className="text-xs text-muted-foreground">Due Date (optional)</label><input type="date" value={dueDate} onChange={e=>setDueDate(e.target.value)} className="glass w-full rounded-lg p-2 text-sm" /></div>
+        </div>
+        <div className="flex justify-end gap-2 mt-6">
+          <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm">Cancel</button>
+          <button onClick={() => { onSave({ name, emoji, category, difficulty, targetDays: targetDays || undefined, dueDate: dueDate || undefined }); onClose(); }} className="bg-gradient-primary px-4 py-2 rounded-lg text-sm flex items-center gap-1"><Save className="h-4 w-4"/> Save</button>
+        </div>
       </div>
     </div>
   );
-}
-
-function RiskBadge({ score }: { score: number }) {
-  if (score >= 70) return <span className="text-green-400">🟢 Safe</span>;
-  if (score >= 40) return <span className="text-yellow-400">🟡 Medium</span>;
-  return <span className="text-red-400">🔴 High</span>;
 }
 
 // ---------- Main Page ----------
 function HabitsPage() {
-  const {
-    habits,
-    goals,
-    addHabit,
-    deleteHabit,
-    toggleHabit,
-    updateHabitProgress,
-    addHabitNote,
-  } = useStore();
-
+  const { habits, addHabit, deleteHabit, toggleHabit, updateHabit, addHabitNote } = useStore();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [drawerHabit, setDrawerHabit] = useState<Habit | null>(null);
-  const [filterCategory, setFilterCategory] = useState<HabitCategory | "all">("all");
-  const [filterDifficulty, setFilterDifficulty] = useState<HabitDifficulty | "all">("all");
-  const [heatmapView, setHeatmapView] = useState<"month" | "quarter" | "year">("month");
+  const [editingHabit, setEditingHabit] = useState<Habit | null>(null);
   const [showBuilder, setShowBuilder] = useState(false);
-  const [builderStep, setBuilderStep] = useState(0);
-  const [builderGoal, setBuilderGoal] = useState("");
-  const [builderDuration, setBuilderDuration] = useState("");
-  const [builderTime, setBuilderTime] = useState("");
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [aiGenerating, setAiGenerating] = useState(false);
+  const [aiSuggestions, setAiSuggestions] = useState<Partial<Habit>[]>([]);
+  const [aiChatOpen, setAiChatOpen] = useState(false);
+  const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'ai', text: string, intent?: string, data?: any }[]>([]);
+  const [chatInput, setChatInput] = useState("");
   const [editingNote, setEditingNote] = useState<{ habitId: string; date: string; text: string } | null>(null);
 
   const today = formatLocalDate(new Date());
-  const last30Days = getLastNDays(30);
-  const last90Days = getLastNDays(90);
-  const yearDays = getLastNDays(365);
+  const last30Days = [...Array(30)].map((_, i) => formatLocalDate(new Date(Date.now() - i * 24 * 60 * 60 * 1000)));
+  const last7Days = last30Days.slice(0, 7);
 
-  const filteredHabits = useMemo(() => habits.filter(h => 
-    (filterCategory === "all" || h.category === filterCategory) &&
-    (filterDifficulty === "all" || h.difficulty === filterDifficulty)
-  ), [habits, filterCategory, filterDifficulty]);
-
+  // Stats
   const currentStreak = Math.max(...habits.map(h => getStreak(h.history, today)), 0);
-  const habitsToday = habits.filter(h => !h.history[today]).length;
   const totalHabits = habits.length;
   const completedToday = habits.filter(h => h.history[today]).length;
   const completionRate = totalHabits ? Math.round((completedToday / totalHabits) * 100) : 0;
-  const atRiskCount = habits.filter(h => getHabitScore(h, today, last30Days) < 40).length;
-
-  // AI Coach insights
-  const coachInsights = useMemo(() => {
-    if (habits.length === 0) return [];
-    const insights = [];
-    const best = [...habits].sort((a,b) => getHabitScore(b, today, last30Days) - getHabitScore(a, today, last30Days))[0];
-    insights.push(`🏆 Your best habit is **${best.name}** with score ${getHabitScore(best, today, last30Days)}.`);
-    const worst = [...habits].sort((a,b) => getCompletionRate(a.history, last30Days) - getCompletionRate(b.history, last30Days))[0];
-    insights.push(`⚠️ **${worst.name}** is skipped most often (${Math.round(getCompletionRate(worst.history, last30Days))}% completion). Try moving it to morning.`);
-    const habitWithBestTime = habits.find(h => getCompletionRate(h.history, last30Days) > 70);
-    if (habitWithBestTime) insights.push(`⏰ You usually complete **${habitWithBestTime.name}** around ${getBestTime(habitWithBestTime)}. That's your peak productivity window.`);
-    const lastWeek = getLastNDays(7);
-    const prevWeek = getLastNDays(14).slice(0,7);
-    const currentWeekRate = habits.reduce((acc,h) => acc + getCompletionRate(h.history, lastWeek),0) / habits.length;
-    const prevWeekRate = habits.reduce((acc,h) => acc + getCompletionRate(h.history, prevWeek),0) / habits.length;
-    if (currentWeekRate > prevWeekRate) insights.push(`📈 Your consistency improved by ${Math.round(currentWeekRate - prevWeekRate)}% this week. Keep going!`);
-    else if (prevWeekRate > currentWeekRate) insights.push(`📉 Your consistency dropped by ${Math.round(prevWeekRate - currentWeekRate)}% this week. Let's focus on small wins.`);
-    return insights;
-  }, [habits, today, last30Days]);
-
-  const weeklyReview = useMemo(() => {
-    const last7 = getLastNDays(7);
-    const completions = habits.map(h => ({
-      name: h.name,
-      completed: last7.filter(d => h.history[d]).length,
-      rate: (last7.filter(d => h.history[d]).length / 7) * 100
-    }));
-    const strengths = completions.filter(c => c.rate >= 70).slice(0,2);
-    const weaknesses = completions.filter(c => c.rate < 40).slice(0,2);
-    let review = `You completed ${completions.reduce((s,c)=>s+c.completed,0)} out of ${habits.length * 7} habits this week. `;
-    if (strengths.length) review += `Strengths: ${strengths.map(s=>s.name).join(', ')}. `;
-    if (weaknesses.length) review += `Needs improvement: ${weaknesses.map(w=>w.name).join(', ')}. `;
-    if (weaknesses.length) review += `Recommendation: Move ${weaknesses[0].name} to your most productive hour.`;
-    return review;
-  }, [habits]);
-
   const remainingHabits = habits.filter(h => !h.history[today]);
-  const mostImportant = remainingHabits.length ? [...remainingHabits].sort((a,b) => getHabitScore(b, today, last30Days) - getHabitScore(a, today, last30Days))[0] : null;
-  const estimatedTotalTime = remainingHabits.reduce((sum, h) => sum + (h.goal?.target ? Math.min(120, h.goal.target * 10) : 30), 0);
+
+  // Weekly Insights
+  const weeklyInsights = useMemo(() => {
+    if (habits.length === 0) return null;
+    // Most consistent (highest health score)
+    const healthScores = habits.map(h => ({ habit: h, score: getHealthScore(h, today, last30Days, last7Days) }));
+    const mostConsistent = [...healthScores].sort((a,b) => b.score - a.score)[0];
+    // Most improved (largest increase in weekly completion vs previous week)
+    const lastWeek = last30Days.slice(0,7);
+    const prevWeek = last30Days.slice(7,14);
+    const improvements = habits.map(h => ({
+      habit: h,
+      improvement: getCompletionRate(h.history, lastWeek) - getCompletionRate(h.history, prevWeek)
+    }));
+    const mostImproved = [...improvements].sort((a,b) => b.improvement - a.improvement)[0];
+    // Needs attention (lowest health score)
+    const needsAttention = [...healthScores].sort((a,b) => a.score - b.score)[0];
+    // Productivity trend (average completion rate change)
+    const avgLastWeek = habits.reduce((acc,h) => acc + getCompletionRate(h.history, lastWeek), 0) / habits.length;
+    const avgPrevWeek = habits.reduce((acc,h) => acc + getCompletionRate(h.history, prevWeek), 0) / habits.length;
+    const trend = Math.round(avgLastWeek - avgPrevWeek);
+    return { mostConsistent, mostImproved, needsAttention, trend };
+  }, [habits, today, last30Days, last7Days]);
+
+  // AI Habit Builder - generates 3 suggestions
+  const generateHabitSuggestions = async () => {
+    if (!aiPrompt.trim()) return;
+    setAiGenerating(true);
+    try {
+      const response = await askAssistant({
+        data: {
+          message: `The user wants to create a new habit: "${aiPrompt}". Generate 3 different habit suggestions in JSON array format. Each object should have: name (short, catchy), emoji (one emoji), category (health/learning/career/fitness/spiritual/personal), difficulty (easy/medium/hard), targetDays (optional number), description (short, why it's effective). Return ONLY the JSON array, no extra text. Example: [{ "name": "English Fluency", "emoji": "🇬🇧", "category": "learning", "difficulty": "medium", "targetDays": 30, "description": "Daily speaking practice boosts confidence" }]`,
+          context: {}
+        }
+      });
+      let jsonStr = response.response;
+      const jsonMatch = jsonStr.match(/\[[\s\S]*\]/);
+      if (jsonMatch) jsonStr = jsonMatch[0];
+      const suggestions = JSON.parse(jsonStr);
+      setAiSuggestions(suggestions.slice(0, 3));
+    } catch (err) {
+      console.error(err);
+      setAiSuggestions([{
+        name: aiPrompt.slice(0, 40),
+        emoji: "✨",
+        category: "personal",
+        difficulty: "medium",
+        description: "Custom habit based on your request"
+      }]);
+    } finally {
+      setAiGenerating(false);
+    }
+  };
+
+  const addSuggestion = (sugg: Partial<Habit>) => {
+    addHabit({
+      name: sugg.name!,
+      emoji: sugg.emoji || "📌",
+      color: COLORS[habits.length % COLORS.length],
+      category: sugg.category as HabitCategory || "personal",
+      difficulty: sugg.difficulty as HabitDifficulty || "medium",
+      targetDays: sugg.targetDays
+    });
+    setAiSuggestions([]);
+    setAiPrompt("");
+    setShowBuilder(false);
+  };
+
+  // AI Intent Handler
+  const handleChatIntent = async (userMessage: string) => {
+    const lower = userMessage.toLowerCase();
+    // Simple intent detection first
+    if (lower.includes("add habit") || lower.includes("create habit") || lower.includes("new habit")) {
+      // Extract potential habit name
+      let habitName = userMessage.replace(/add habit|create habit|new habit|please/gi, "").trim();
+      if (habitName.length < 2) habitName = "New habit";
+      // Ask AI to refine
+      try {
+        const response = await askAssistant({
+          data: {
+            message: `The user wants to add a new habit: "${habitName}". Generate 3 habit suggestions as JSON array (same format as before).`,
+            context: {}
+          }
+        });
+        let jsonStr = response.response;
+        const jsonMatch = jsonStr.match(/\[[\s\S]*\]/);
+        if (jsonMatch) jsonStr = jsonMatch[0];
+        const suggestions = JSON.parse(jsonStr);
+        setChatMessages(prev => [...prev, { role: 'ai', text: `I'll help you add a new habit. Choose one of these options:`, intent: "CREATE_HABIT", data: suggestions }]);
+      } catch (err) {
+        setChatMessages(prev => [...prev, { role: 'ai', text: `Tell me more about the habit you want to build, and I'll create it for you.` }]);
+      }
+    } else if (lower.includes("complete") || lower.includes("done") || lower.includes("finish")) {
+      // Find habit name and mark it done
+      const words = userMessage.split(" ");
+      const possibleHabit = words.find(w => habits.some(h => h.name.toLowerCase().includes(w.toLowerCase())));
+      if (possibleHabit) {
+        const habit = habits.find(h => h.name.toLowerCase().includes(possibleHabit.toLowerCase()));
+        if (habit) {
+          toggleHabit(habit.id, today);
+          setChatMessages(prev => [...prev, { role: 'ai', text: `✅ Marked "${habit.name}" as complete for today!` }]);
+          return;
+        }
+      }
+      setChatMessages(prev => [...prev, { role: 'ai', text: `Which habit did you complete? Please tell me the name.` }]);
+    } else if (lower.includes("delete") || lower.includes("remove")) {
+      const words = userMessage.split(" ");
+      const possibleHabit = words.find(w => habits.some(h => h.name.toLowerCase().includes(w.toLowerCase())));
+      if (possibleHabit) {
+        const habit = habits.find(h => h.name.toLowerCase().includes(possibleHabit.toLowerCase()));
+        if (habit) {
+          deleteHabit(habit.id);
+          setChatMessages(prev => [...prev, { role: 'ai', text: `🗑️ Removed "${habit.name}" from your habits.` }]);
+          return;
+        }
+      }
+      setChatMessages(prev => [...prev, { role: 'ai', text: `Which habit would you like to delete? Tell me the name.` }]);
+    } else {
+      // General advice
+      try {
+        const response = await askAssistant({
+          data: {
+            message: `You are a friendly, concise habit coach. The user says: "${userMessage}". Give encouraging, actionable advice (max 2 sentences).`,
+            context: { habits: habits.map(h => ({ name: h.name, streak: getStreak(h.history, today) })) }
+          }
+        });
+        setChatMessages(prev => [...prev, { role: 'ai', text: response.response }]);
+      } catch (err) {
+        setChatMessages(prev => [...prev, { role: 'ai', text: "Keep going! Small steps every day make big changes." }]);
+      }
+    }
+  };
+
+  const sendChatMessage = async () => {
+    if (!chatInput.trim()) return;
+    const userMsg = chatInput;
+    setChatMessages(prev => [...prev, { role: 'user', text: userMsg }]);
+    setChatInput("");
+    await handleChatIntent(userMsg);
+  };
+
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Morning" : hour < 18 ? "Afternoon" : "Evening";
 
-  const addTemplate = (tmpl: typeof TEMPLATES[0]) => {
-    tmpl.habits.forEach(name => {
+  const addTemplate = (tmpl: any) => {
+    tmpl.habits.forEach((name: string) => {
       addHabit({
         name, emoji: "📌", color: COLORS[habits.length % COLORS.length],
-        category: tmpl.category as HabitCategory, difficulty: tmpl.difficulty as HabitDifficulty,
-        goal: { target: 1, current: 0, unit: "session" }
+        category: tmpl.category, difficulty: tmpl.difficulty,
+        targetDays: tmpl.targetDays
       });
     });
   };
 
-  const handleBuilderNext = () => {
-    if (builderStep === 0 && builderGoal.trim()) setBuilderStep(1);
-    else if (builderStep === 1 && builderDuration) setBuilderStep(2);
-    else if (builderStep === 2 && builderTime) {
-      addHabit({
-        name: builderGoal.slice(0, 30), emoji: "🤖", color: COLORS[habits.length % COLORS.length],
-        category: builderGoal.toLowerCase().includes("code") ? "learning" : "personal",
-        difficulty: builderTime.includes("2") ? "hard" : "medium",
-        goal: { target: parseInt(builderTime.match(/\d+/)?.[0] || "1"), current: 0, unit: "hours" }
-      });
-      setShowBuilder(false); setBuilderStep(0); setBuilderGoal(""); setBuilderDuration(""); setBuilderTime("");
-    }
-  };
-
-  const predictions = useMemo(() => habits.map(h => ({ id: h.id, prob: getPrediction(h, today) })), [habits, today]);
-
   return (
     <AppShell>
       <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6">
-        {/* Dashboard Hero */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <GlassCard className="p-4 text-center"><Flame className="h-6 w-6 text-orange-400 mx-auto mb-1"/><p className="text-2xl font-bold">{currentStreak}</p><p className="text-xs">Current Streak</p></GlassCard>
-          <GlassCard className="p-4 text-center"><ListChecks className="h-6 w-6 text-neon-cyan mx-auto mb-1"/><p className="text-2xl font-bold">{habitsToday}/{totalHabits}</p><p className="text-xs">Habits Today</p></GlassCard>
-          <GlassCard className="p-4 text-center"><TrendingUp className="h-6 w-6 text-green-400 mx-auto mb-1"/><p className="text-2xl font-bold">{completionRate}%</p><p className="text-xs">Completion Rate</p></GlassCard>
-          <GlassCard className="p-4 text-center"><AlertTriangle className="h-6 w-6 text-red-400 mx-auto mb-1"/><p className="text-2xl font-bold">{atRiskCount}</p><p className="text-xs">At Risk</p></GlassCard>
+        {/* Hero Stats */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <GlassCard className="p-5 flex items-center gap-4"><Flame className="h-8 w-8 text-orange-400"/><div><p className="text-3xl font-bold">{currentStreak}</p><p className="text-xs text-muted-foreground">Day Streak</p></div></GlassCard>
+          <GlassCard className="p-5 flex items-center gap-4"><ListChecks className="h-8 w-8 text-neon-cyan"/><div><p className="text-3xl font-bold">{completedToday}/{totalHabits}</p><p className="text-xs text-muted-foreground">Done Today</p></div></GlassCard>
+          <GlassCard className="p-5 flex items-center gap-4"><TrendingUp className="h-8 w-8 text-green-400"/><div><p className="text-3xl font-bold">{completionRate}%</p><p className="text-xs text-muted-foreground">Completion Rate</p></div></GlassCard>
+          <GlassCard className="p-5 flex items-center gap-4"><Award className="h-8 w-8 text-yellow-400"/><div><p className="text-3xl font-bold">{habits.length}</p><p className="text-xs text-muted-foreground">Active Habits</p></div></GlassCard>
         </div>
 
-        {/* Weekly Momentum */}
-        <GlassCard className="p-5"><h3 className="text-sm font-semibold mb-3">Weekly Momentum</h3><WeeklyMomentumChart habits={habits} days={last30Days} /></GlassCard>
-
-        {/* Today's Mission */}
-        <GlassCard className="p-5 bg-gradient-to-r from-neon-purple/20 to-neon-cyan/20">
-          <h2 className="text-xl font-bold mb-2 flex items-center gap-2"><Target className="h-5 w-5" />Today's Mission</h2>
-          <div className="flex flex-wrap justify-between items-end">
-            <div><p className="text-sm">{remainingHabits.length} habits remaining</p>{mostImportant && <p className="text-sm mt-1">🎯 Most important: <strong>{mostImportant.name}</strong></p>}<p className="text-xs mt-1">⏱️ Estimated time: {Math.ceil(estimatedTotalTime / 60)}h {estimatedTotalTime % 60}m</p></div>
-            <div className="text-right"><p className="text-2xl font-bold">{completedToday}/{totalHabits}</p><p className="text-xs">completed today</p></div>
+        {/* Today's Mission - AI Generated */}
+        <GlassCard className="p-6 bg-gradient-to-r from-neon-purple/20 to-neon-cyan/20 border border-white/10">
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <div>
+              <h2 className="text-xl font-bold flex items-center gap-2"><Sparkles className="h-5 w-5 text-yellow-400"/> Today's Mission</h2>
+              <p className="text-sm mt-1">{remainingHabits.length} habit{remainingHabits.length !== 1 ? 's' : ''} remaining</p>
+              {remainingHabits.length > 0 && (
+                <div className="mt-3 space-y-1">
+                  <p className="text-xs text-muted-foreground">Priority habits:</p>
+                  {remainingHabits.slice(0, 2).map(h => (
+                    <div key={h.id} className="flex items-center gap-2 text-sm"><span className="text-lg">{h.emoji}</span> {h.name} <span className="text-xs text-muted-foreground">({h.targetDays ? `${getStreak(h.history, today)}/${h.targetDays} days` : ''})</span></div>
+                  ))}
+                </div>
+              )}
+              <p className="text-xs text-muted-foreground mt-3">⏱️ Estimated focus: {Math.ceil(remainingHabits.length * 25)} min</p>
+            </div>
+            <div className="relative">
+              <ProgressRing progress={completionRate} size={80} strokeWidth={6} />
+              <span className="absolute inset-0 flex items-center justify-center text-lg font-bold">{completionRate}%</span>
+            </div>
           </div>
         </GlassCard>
 
-        {/* AI Coach */}
-        <GlassCard className="p-5"><div className="flex items-center gap-2 mb-3"><Brain className="h-5 w-5 text-neon-cyan" />AI Coach</div><ul className="space-y-2 text-sm">{coachInsights.map((insight,i)=><li key={i} className="flex gap-2"><Lightbulb className="h-4 w-4 mt-0.5 text-yellow-400"/>{insight}</li>)}</ul></GlassCard>
+        {/* Weekly Insights Dashboard */}
+        {weeklyInsights && (
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <GlassCard className="p-3"><div className="text-xs text-muted-foreground">🏆 Most consistent</div><div className="font-semibold">{weeklyInsights.mostConsistent.habit.emoji} {weeklyInsights.mostConsistent.habit.name}</div><div className="text-xs">Score: {weeklyInsights.mostConsistent.score}/100</div></GlassCard>
+            <GlassCard className="p-3"><div className="text-xs text-muted-foreground">📈 Most improved</div><div className="font-semibold">{weeklyInsights.mostImproved.habit.emoji} {weeklyInsights.mostImproved.habit.name}</div><div className="text-xs">{weeklyInsights.mostImproved.improvement > 0 ? `+${weeklyInsights.mostImproved.improvement}%` : `${weeklyInsights.mostImproved.improvement}%`}</div></GlassCard>
+            <GlassCard className="p-3"><div className="text-xs text-muted-foreground">⚠️ Needs attention</div><div className="font-semibold">{weeklyInsights.needsAttention.habit.emoji} {weeklyInsights.needsAttention.habit.name}</div><div className="text-xs">Score: {weeklyInsights.needsAttention.score}/100</div></GlassCard>
+            <GlassCard className="p-3"><div className="text-xs text-muted-foreground">📊 Productivity trend</div><div className="font-semibold">{weeklyInsights.trend > 0 ? `+${weeklyInsights.trend}%` : `${weeklyInsights.trend}%`}</div><div className="text-xs">vs last week</div></GlassCard>
+          </div>
+        )}
 
-        {/* Briefing */}
-        <GlassCard className="p-4"><p className="text-sm">🌅 Good {greeting}, {useStore.getState().userName || "Rizwan"}! You've completed {completedToday}/{totalHabits} habits. {mostImportant ? `Your priority today: ${mostImportant.name}.` : "Great job!"}</p></GlassCard>
+        {/* AI Coach Insights */}
+        <GlassCard className="p-5">
+          <div className="flex items-center gap-2 mb-3"><Brain className="h-5 w-5 text-neon-cyan" /> AI Coach</div>
+          <ul className="space-y-2 text-sm">
+            <li className="flex gap-2"><Lightbulb className="h-4 w-4 mt-0.5 text-yellow-400"/> Your current streak leader: {habits.reduce((best, h) => getStreak(h.history, today) > getStreak(best?.history || {}, today) ? h : best, null as Habit | null)?.name || "None"} with {Math.max(...habits.map(h=>getStreak(h.history,today)))} days.</li>
+            <li className="flex gap-2"><Lightbulb className="h-4 w-4 mt-0.5 text-yellow-400"/> You have {habits.filter(h=>getHealthScore(h,today,last30Days,last7Days)<40).length} habit{habits.filter(h=>getHealthScore(h,today,last30Days,last7Days)<40).length!==1?'s':''} that could use more attention.</li>
+          </ul>
+        </GlassCard>
 
-        {/* Filters & AI Builder */}
-        <div className="flex flex-wrap gap-3 items-center justify-between">
-          <div className="flex gap-2"><Filter className="h-4 w-4"/><select value={filterCategory} onChange={e=>setFilterCategory(e.target.value as any)} className="glass rounded-lg px-2 py-1 text-xs"><option value="all">All categories</option>{CATEGORIES.map(c=><option key={c}>{c}</option>)}</select><select value={filterDifficulty} onChange={e=>setFilterDifficulty(e.target.value as any)} className="glass rounded-lg px-2 py-1 text-xs"><option value="all">All difficulties</option>{DIFFICULTIES.map(d=><option key={d}>{d}</option>)}</select></div>
-          <button onClick={()=>setShowBuilder(true)} className="text-xs bg-neon-purple/20 px-3 py-1 rounded-full">+ AI Builder</button>
+        {/* Action Buttons */}
+        <div className="flex flex-wrap gap-3">
+          <button onClick={()=>setShowBuilder(true)} className="glass px-5 py-2.5 rounded-xl text-sm font-medium flex items-center gap-2 hover:bg-white/10 transition"><Plus className="h-4 w-4"/> AI Habit Builder</button>
+          <button onClick={()=>setAiChatOpen(true)} className="glass px-5 py-2.5 rounded-xl text-sm font-medium flex items-center gap-2 hover:bg-white/10 transition"><MessageCircle className="h-4 w-4"/> AI Assistant</button>
         </div>
 
-        {/* Habit Cards (Collapsible) */}
+        {/* Habit Cards */}
         <div className="space-y-3">
-          {filteredHabits.map(habit => {
-            const streak = getStreak(habit.history, today);
-            const rate = getCompletionRate(habit.history, last30Days);
-            const score = getHabitScore(habit, today, last30Days);
-            const prediction = predictions.find(p=>p.id===habit.id)?.prob || 50;
-            const isExpanded = expandedId === habit.id;
-            const heatmapDays = heatmapView === "year" ? yearDays : heatmapView === "quarter" ? last90Days : last30Days.slice(-90);
-            const noteForToday = habit.notes?.[today] || "";
-            return (
-              <GlassCard key={habit.id} className="!p-0 overflow-hidden">
-                <div className="p-4 cursor-pointer hover:bg-white/5 transition flex justify-between items-center" onClick={()=>setExpandedId(isExpanded?null:habit.id)}>
-                  <div className="flex items-center gap-3"><span className="text-2xl">{habit.emoji}</span><div><div className="font-medium">{habit.name}</div><div className="flex gap-3 text-xs text-muted-foreground mt-0.5"><span>🔥 {streak} days</span><span>📈 {Math.round(rate)}%</span>{habit.goal && <span>🎯 {habit.goal.current}/{habit.goal.target} {habit.goal.unit}</span>}<RiskBadge score={score} /><span className={`${prediction>70?'text-green-400':prediction>40?'text-yellow-400':'text-red-400'}`}>🔮 {prediction}%</span></div></div></div>
-                  <div className="flex items-center gap-2">
-                    <button onClick={(e)=>{e.stopPropagation(); toggleHabit(habit.id, today);}} className="rounded-full p-1">{habit.history[today]?<CheckCircle className="h-5 w-5 text-neon-cyan"/>:<Circle className="h-5 w-5 text-white/30"/>}</button>
-                    {isExpanded?<ChevronDown className="h-4 w-4"/>:<ChevronRight className="h-4 w-4"/>}
-                  </div>
-                </div>
-                <AnimatePresence>
-                  {isExpanded && (
-                    <motion.div initial={{height:0}} animate={{height:"auto"}} exit={{height:0}} className="border-t border-white/10 p-4 space-y-3">
-                      {habit.goal && <ProgressBar current={habit.goal.current} target={habit.goal.target} unit={habit.goal.unit} />}
-                      <div className="flex flex-wrap gap-2 text-xs"><span className="glass px-2 py-1 rounded-full">{habit.category}</span><span className="glass px-2 py-1 rounded-full">{habit.difficulty}</span><button onClick={()=>setDrawerHabit(habit)} className="text-neon-cyan underline">Details</button><button onClick={()=>deleteHabit(habit.id)} className="text-red-400 underline">Delete</button></div>
-                      <div className="flex justify-between items-center"><div className="flex gap-1">{heatmapView==="year"&&<button onClick={()=>setHeatmapView("month")}>Month</button>}{heatmapView==="quarter"&&<button onClick={()=>setHeatmapView("year")}>Year</button>}{heatmapView==="month"&&<button onClick={()=>setHeatmapView("quarter")}>90d</button>}</div><div className="grid grid-cols-[repeat(90,minmax(0,1fr))] gap-0.5 overflow-x-auto max-w-full">{heatmapDays.slice(-90).map((date,idx)=><div key={idx} className={`aspect-square rounded-sm ${habit.history[date]?`bg-${habit.color}`:"bg-white/5"} hover:scale-125 transition`} style={habit.history[date]?{background:habit.color==="neon-purple"?"oklch(0.7 0.24 305)":habit.color==="neon-blue"?"oklch(0.72 0.2 250)":habit.color==="neon-cyan"?"oklch(0.85 0.16 195)":"oklch(0.72 0.24 350)"}:undefined} title={date} />)}</div></div>
-                      <div className="flex items-center gap-2"><button onClick={()=>setEditingNote({habitId:habit.id, date:today, text:noteForToday})} className="text-xs text-neon-cyan flex items-center gap-1"><Edit2 className="h-3 w-3"/>Add note</button>{noteForToday && <span className="text-xs text-muted-foreground">📝 {noteForToday.slice(0,40)}</span>}</div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </GlassCard>
-            );
-          })}
+          {habits.map(habit => (
+            <HabitCard
+              key={habit.id}
+              habit={habit}
+              onToggle={() => toggleHabit(habit.id, today)}
+              onEdit={() => setEditingHabit(habit)}
+              onDelete={() => deleteHabit(habit.id)}
+              onViewDetails={() => setDrawerHabit(habit)}
+              today={today}
+              last30Days={last30Days}
+              last7Days={last7Days}
+            />
+          ))}
+          {habits.length === 0 && (
+            <GlassCard className="p-12 text-center">
+              <p className="text-muted-foreground">No habits yet. Use the AI Builder or Assistant to create your first habit.</p>
+            </GlassCard>
+          )}
         </div>
 
-        {/* Weekly AI Review */}
-        <GlassCard className="p-5"><div className="flex justify-between items-center mb-3"><h3 className="font-semibold flex items-center gap-2"><BarChart3 className="h-4 w-4"/>Weekly AI Review</h3></div><p className="text-sm">{weeklyReview}</p></GlassCard>
+        {/* Smart Templates */}
+        <div>
+          <h3 className="text-sm font-semibold mb-3">Quick Start Templates</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <GlassCard className="p-3 cursor-pointer hover:scale-105 transition" onClick={() => addTemplate({ name: "Placement Prep", habits: ["DSA Practice", "Aptitude Test", "CS Fundamentals"], category: "learning", difficulty: "hard", targetDays: 60 })}>
+              <p className="font-medium">🎯 Placement Prep</p>
+              <p className="text-xs text-muted-foreground">DSA, Aptitude, CS Fundamentals</p>
+            </GlassCard>
+            <GlassCard className="p-3 cursor-pointer hover:scale-105 transition" onClick={() => addTemplate({ name: "Fitness", habits: ["Morning Workout", "Drink 3L Water", "Sleep 8h"], category: "fitness", difficulty: "medium", targetDays: 30 })}>
+              <p className="font-medium">🏋️ Fitness</p>
+              <p className="text-xs text-muted-foreground">Workout, Hydration, Sleep</p>
+            </GlassCard>
+            <GlassCard className="p-3 cursor-pointer hover:scale-105 transition" onClick={() => addTemplate({ name: "Study Mode", habits: ["Revision", "Practice Problems", "Reading"], category: "learning", difficulty: "medium", targetDays: 45 })}>
+              <p className="font-medium">📚 Study Mode</p>
+              <p className="text-xs text-muted-foreground">Revision, Practice, Reading</p>
+            </GlassCard>
+          </div>
+        </div>
 
-        {/* Goal Linking */}
-        {goals.length > 0 && <GlassCard className="p-5"><h3 className="font-semibold mb-2 flex items-center gap-2"><Target className="h-4 w-4"/>Linked Goal</h3><select className="glass rounded-lg px-3 py-2 text-sm w-full" defaultValue=""><option disabled>Link habits to a goal</option>{goals.map(g=><option key={g.id}>{g.title}</option>)}</select></GlassCard>}
-
-        {/* Habit Templates */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">{TEMPLATES.map((tmpl,i)=> <GlassCard key={i} className="p-3 cursor-pointer hover:scale-105 transition" onClick={()=>addTemplate(tmpl)}><p className="font-medium">{tmpl.name}</p><p className="text-xs text-muted-foreground">{tmpl.habits.join(", ")}</p></GlassCard>)}</div>
+        {/* Roadmap Integration */}
+        <GlassCard className="p-5 cursor-pointer hover:bg-white/5 transition" onClick={() => {
+          // In a real app, open a modal to paste playlist/goal
+          alert("Roadmap integration: paste a YouTube playlist URL or describe a goal, and AI will generate a daily habit plan with target days.");
+        }}>
+          <div className="flex items-center gap-3"><Link2 className="h-5 w-5 text-neon-cyan"/> <span className="font-medium">Generate habits from a roadmap</span></div>
+          <p className="text-xs text-muted-foreground mt-1">Paste a YouTube playlist or describe a learning goal → AI creates a daily habit plan</p>
+        </GlassCard>
 
         {/* Quick Add */}
-        <form onSubmit={(e)=>{e.preventDefault(); const name=(e.target as HTMLFormElement).habitName.value; if(!name) return; addHabit({name, emoji:"➕", color:COLORS[habits.length%COLORS.length], category:"personal", difficulty:"medium"}); (e.target as HTMLFormElement).reset();}} className="glass p-4 rounded-xl flex gap-2"><input name="habitName" placeholder="New habit name" className="flex-1 bg-transparent outline-none text-sm"/><button type="submit" className="bg-gradient-primary px-4 py-2 rounded-lg text-xs">+ Add</button></form>
+        <form onSubmit={(e)=>{e.preventDefault(); const name=(e.target as HTMLFormElement).habitName.value; if(!name) return; addHabit({name, emoji:"➕", color:COLORS[habits.length%COLORS.length], category:"personal", difficulty:"medium"}); (e.target as HTMLFormElement).reset();}} className="glass p-4 rounded-xl flex gap-2">
+          <input name="habitName" placeholder="Quick habit name..." className="flex-1 bg-transparent outline-none text-sm" />
+          <button type="submit" className="bg-gradient-primary px-4 py-2 rounded-lg text-xs">+ Add</button>
+        </form>
+
+        {/* Modals */}
+        {editingHabit && <EditHabitModal habit={editingHabit} onClose={()=>setEditingHabit(null)} onSave={(updated)=>updateHabit(editingHabit.id, updated)} />}
 
         {/* Habit Details Drawer */}
-        <AnimatePresence>{drawerHabit && (<div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex justify-end" onClick={()=>setDrawerHabit(null)}><motion.div initial={{x:'100%'}} animate={{x:0}} exit={{x:'100%'}} className="w-full max-w-md glass h-full overflow-y-auto p-5" onClick={e=>e.stopPropagation()}><div className="flex justify-between items-center mb-4"><h2 className="text-xl font-bold">{drawerHabit.emoji} {drawerHabit.name}</h2><button onClick={()=>setDrawerHabit(null)}><X className="h-5 w-5"/></button></div><div className="space-y-4"><div><span className="text-muted-foreground">🔥 Streak:</span> {getStreak(drawerHabit.history, today)} days</div><div><span className="text-muted-foreground">📈 Consistency:</span> {Math.round(getCompletionRate(drawerHabit.history, last30Days))}%</div><div><span className="text-muted-foreground">⏰ Best time:</span> {getBestTime(drawerHabit)}</div><div><span className="text-muted-foreground">🏆 Longest streak:</span> {getLongestStreak(drawerHabit.history)} days</div><div><span className="text-muted-foreground">🎯 Score:</span> {getHabitScore(drawerHabit, today, last30Days)}/100</div><div><span className="text-muted-foreground">🔮 Prediction:</span> {getPrediction(drawerHabit, today)}% chance today</div><div className="border-t pt-2"><h4 className="font-semibold">Notes</h4>{drawerHabit.notes && Object.entries(drawerHabit.notes).slice(-3).map(([date,note])=><p key={date} className="text-xs"><strong>{date}:</strong> {note}</p>)}{(!drawerHabit.notes || Object.keys(drawerHabit.notes).length===0) && <p className="text-xs">No notes yet.</p>}</div></div></motion.div></div>)}</AnimatePresence>
+        <AnimatePresence>
+          {drawerHabit && (
+            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex justify-end" onClick={()=>setDrawerHabit(null)}>
+              <motion.div initial={{x:'100%'}} animate={{x:0}} exit={{x:'100%'}} className="w-full max-w-md glass h-full overflow-y-auto p-5" onClick={e=>e.stopPropagation()}>
+                <div className="flex justify-between items-center mb-4"><h2 className="text-xl font-bold">{drawerHabit.emoji} {drawerHabit.name}</h2><button onClick={()=>setDrawerHabit(null)}><X className="h-5 w-5"/></button></div>
+                <div className="space-y-4">
+                  <div><span className="text-muted-foreground">🔥 Current Streak:</span> {getStreak(drawerHabit.history, today)} days</div>
+                  <div><span className="text-muted-foreground">📈 Consistency (30d):</span> {Math.round(getCompletionRate(drawerHabit.history, last30Days))}%</div>
+                  <div><span className="text-muted-foreground">❤️ Health Score:</span> {getHealthScore(drawerHabit, today, last30Days, last7Days)}/100</div>
+                  {drawerHabit.targetDays && <div><span className="text-muted-foreground">🎯 Target:</span> {drawerHabit.targetDays} days</div>}
+                  <div className="border-t pt-2"><h4 className="font-semibold">Notes</h4>{drawerHabit.notes && Object.entries(drawerHabit.notes).slice(-5).map(([date,note])=><p key={date} className="text-xs mt-1"><strong>{date}:</strong> {note}</p>)}{(!drawerHabit.notes || Object.keys(drawerHabit.notes).length===0) && <p className="text-xs">No notes yet.</p>}</div>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
 
-        {/* AI Habit Builder Modal */}
-        <AnimatePresence>{showBuilder && (<div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={()=>setShowBuilder(false)}><div className="glass p-6 rounded-xl max-w-md w-full" onClick={e=>e.stopPropagation()}><div className="flex justify-between items-center mb-4"><h3 className="font-bold">AI Habit Builder</h3><button onClick={()=>setShowBuilder(false)}><X className="h-5 w-5"/></button></div>{builderStep===0 && <><p className="text-sm mb-2">What do you want to achieve?</p><input autoFocus value={builderGoal} onChange={e=>setBuilderGoal(e.target.value)} className="glass w-full rounded-lg p-2 text-sm" placeholder="e.g., Become better at DSA" /></>}{builderStep===1 && <><p className="text-sm mb-2">Duration?</p><select value={builderDuration} onChange={e=>setBuilderDuration(e.target.value)} className="glass w-full rounded-lg p-2 text-sm"><option value="">Select</option><option>1 month</option><option>3 months</option><option>6 months</option></select></>}{builderStep===2 && <><p className="text-sm mb-2">Available time per day?</p><select value={builderTime} onChange={e=>setBuilderTime(e.target.value)} className="glass w-full rounded-lg p-2 text-sm"><option value="">Select</option><option>30 min</option><option>1 hour</option><option>2 hours</option><option>3+ hours</option></select></>}<div className="flex justify-end gap-2 mt-4">{builderStep>0 && <button onClick={()=>setBuilderStep(prev=>prev-1)} className="px-3 py-1 text-sm">Back</button>}<button onClick={handleBuilderNext} className="bg-gradient-primary px-4 py-1 rounded-lg text-sm">{builderStep===2?'Generate':'Next'}</button></div></div></div>)}</AnimatePresence>
+        {/* AI Habit Builder Modal (with 3 suggestions) */}
+        <AnimatePresence>
+          {showBuilder && (
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={()=>{setShowBuilder(false); setAiSuggestions([]);}}>
+              <div className="glass p-6 rounded-xl max-w-md w-full" onClick={e=>e.stopPropagation()}>
+                <div className="flex justify-between items-center mb-4"><h3 className="text-xl font-bold">AI Habit Builder</h3><button onClick={()=>{setShowBuilder(false); setAiSuggestions([]);}}><X className="h-5 w-5"/></button></div>
+                <textarea value={aiPrompt} onChange={e=>setAiPrompt(e.target.value)} rows={3} className="glass w-full rounded-lg p-3 text-sm" placeholder="Describe what you want to achieve...&#10;e.g., 'Learn English 30 min daily'" />
+                <button onClick={generateHabitSuggestions} disabled={aiGenerating} className="mt-3 w-full bg-gradient-primary py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2">
+                  {aiGenerating ? <><RotateCcw className="h-4 w-4 animate-spin"/> Generating...</> : "Generate Habit Suggestions"}
+                </button>
+                {aiSuggestions.length > 0 && (
+                  <div className="mt-4 space-y-3">
+                    <p className="text-sm font-medium">Choose a habit:</p>
+                    {aiSuggestions.map((sugg, idx) => (
+                      <div key={idx} className="glass p-3 rounded-lg cursor-pointer hover:bg-white/10 transition" onClick={() => addSuggestion(sugg)}>
+                        <div className="flex items-center gap-2"><span className="text-2xl">{sugg.emoji}</span><span className="font-semibold">{sugg.name}</span><span className="text-xs text-muted-foreground">({sugg.difficulty})</span></div>
+                        <p className="text-xs mt-1">{sugg.description}</p>
+                        {sugg.targetDays && <p className="text-xs text-neon-cyan mt-1">🎯 {sugg.targetDays} day challenge</p>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        {/* AI Chat Modal */}
+        <AnimatePresence>
+          {aiChatOpen && (
+            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={()=>setAiChatOpen(false)}>
+              <div className="glass rounded-xl w-full max-w-md h-[500px] flex flex-col" onClick={e=>e.stopPropagation()}>
+                <div className="p-3 border-b border-white/10 flex justify-between items-center"><h3 className="font-bold">AI Habit Coach</h3><button onClick={()=>setAiChatOpen(false)}><X className="h-5 w-5"/></button></div>
+                <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                  {chatMessages.map((msg,idx)=>(
+                    <div key={idx} className={`flex ${msg.role==='user'?'justify-end':'justify-start'}`}>
+                      <div className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${msg.role==='user'?'bg-neon-cyan/20 text-white':'bg-white/10'}`}>{msg.text}</div>
+                    </div>
+                  ))}
+                  {chatMessages.length===0 && <p className="text-center text-muted-foreground text-sm">Say "add a habit to meditate daily" or "complete workout" or "delete reading habit".</p>}
+                </div>
+                {/* If the last message contains habit suggestions, show buttons */}
+                {chatMessages.length > 0 && chatMessages[chatMessages.length-1].intent === "CREATE_HABIT" && chatMessages[chatMessages.length-1].data && (
+                  <div className="p-3 border-t border-white/10 space-y-2">
+                    <p className="text-xs">Choose a habit:</p>
+                    {chatMessages[chatMessages.length-1].data.map((sugg: any, i: number) => (
+                      <button key={i} onClick={() => { addHabit({ name: sugg.name, emoji: sugg.emoji, color: COLORS[habits.length % COLORS.length], category: sugg.category, difficulty: sugg.difficulty, targetDays: sugg.targetDays }); setChatMessages(prev => [...prev.slice(0, -1), { role: 'ai', text: `✅ Added "${sugg.name}" to your habits!` }]); }} className="w-full glass p-2 rounded-lg text-sm text-left flex items-center gap-2"><span className="text-xl">{sugg.emoji}</span> {sugg.name}</button>
+                    ))}
+                  </div>
+                )}
+                <div className="p-3 border-t border-white/10 flex gap-2">
+                  <input value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyPress={e=>e.key==='Enter'&&sendChatMessage()} className="flex-1 glass rounded-lg px-3 py-2 text-sm outline-none" placeholder="e.g., add a habit to learn English" />
+                  <button onClick={sendChatMessage} className="bg-gradient-primary px-3 py-2 rounded-lg"><Send className="h-4 w-4"/></button>
+                </div>
+              </div>
+            </div>
+          )}
+        </AnimatePresence>
 
         {/* Notes Modal */}
-        <AnimatePresence>{editingNote && (<div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={()=>setEditingNote(null)}><div className="glass p-5 rounded-xl max-w-md w-full" onClick={e=>e.stopPropagation()}><h3 className="font-bold mb-2">Reflection for {editingNote.date}</h3><textarea value={editingNote.text} onChange={e=>setEditingNote({...editingNote, text:e.target.value})} rows={3} className="glass w-full rounded-lg p-2 text-sm" placeholder="How did it go?" /><div className="flex justify-end gap-2 mt-3"><button onClick={()=>setEditingNote(null)}>Cancel</button><button onClick={()=>{addHabitNote(editingNote.habitId, editingNote.date, editingNote.text); setEditingNote(null);}} className="bg-neon-cyan/20 px-3 py-1 rounded-lg">Save</button></div></div></div>)}</AnimatePresence>
+        <AnimatePresence>
+          {editingNote && (
+            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={()=>setEditingNote(null)}>
+              <div className="glass p-5 rounded-xl max-w-md w-full" onClick={e=>e.stopPropagation()}>
+                <h3 className="font-bold mb-2">Reflection for {editingNote.date}</h3>
+                <textarea value={editingNote.text} onChange={e=>setEditingNote({...editingNote, text:e.target.value})} rows={3} className="glass w-full rounded-lg p-2 text-sm" placeholder="How did it go? Any challenges?" />
+                <div className="flex justify-end gap-2 mt-3"><button onClick={()=>setEditingNote(null)}>Cancel</button><button onClick={()=>{addHabitNote(editingNote.habitId, editingNote.date, editingNote.text); setEditingNote(null);}} className="bg-neon-cyan/20 px-3 py-1 rounded-lg">Save</button></div>
+              </div>
+            </div>
+          )}
+        </AnimatePresence>
       </div>
     </AppShell>
   );

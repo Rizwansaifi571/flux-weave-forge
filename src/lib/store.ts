@@ -14,6 +14,10 @@ export interface HabitGoal {
   target: number;      // e.g., 4 liters, 30 pages, 1 hour
   current: number;     // progress so far today / overall
   unit: string;        // "liters", "pages", "hours", "questions", "sessions"
+  targetDays?: number;   // e.g., 30 days challenge
+  dueDate?: string;      // optional deadline
+  lastCompletedDate?: string;   // to compute streak without scanning all history
+  healthScore?: number;          // can be computed on the fly
 }
 
 export interface GoalPhase {
