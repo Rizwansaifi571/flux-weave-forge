@@ -6,6 +6,16 @@ export type Priority = "low" | "medium" | "high";
 export type LifeCategory = "career" | "college" | "fitness" | "finance" | "personal";
 export type GoalStatus = "active" | "paused" | "completed";
 
+// New habit types
+export type HabitCategory = "health" | "learning" | "career" | "fitness" | "spiritual" | "personal";
+export type HabitDifficulty = "easy" | "medium" | "hard";
+
+export interface HabitGoal {
+  target: number;      // e.g., 4 liters, 30 pages, 1 hour
+  current: number;     // progress so far today / overall
+  unit: string;        // "liters", "pages", "hours", "questions", "sessions"
+}
+
 export interface GoalPhase {
   id: string;
   title: string;
@@ -104,6 +114,7 @@ export interface AssistantMessage {
   text: string;
   createdAt: string;
 }
+
 export interface Task {
   id: string;
   title: string;
@@ -126,6 +137,16 @@ export interface Habit {
   color: string;
   history: Record<string, boolean>;
   createdAt: string;
+  // New fields (all optional for backward compatibility)
+  category?: HabitCategory;
+  difficulty?: HabitDifficulty;
+  goal?: HabitGoal;
+  notes?: Record<string, string>;      // date -> reflection text
+  linkedGoalId?: string;               // ID of a goal from goals array
+  milestone?: {
+    streakMilestonesReached: number[]; // e.g., [7,30,100]
+    totalCompletions: number;
+  };
 }
 
 export interface WallpaperConfig {
@@ -165,6 +186,9 @@ interface State {
   addHabit: (h: Omit<Habit, "id" | "createdAt" | "history">) => void;
   toggleHabit: (id: string, date: string) => void;
   deleteHabit: (id: string) => void;
+  updateHabit: (id: string, patch: Partial<Habit>) => void;
+  updateHabitProgress: (id: string, current: number) => void;
+  addHabitNote: (id: string, date: string, note: string) => void;
 
   addGoal: (g: Omit<Goal, "id" | "createdAt" | "phases" | "progress" | "status"> & {
     phases?: GoalPhase[];
@@ -216,10 +240,10 @@ export const useStore = create<State>()(
         { id: uid(), title: "Read 30 pages", priority: "low", tags: ["habit"], focusMinutes: 30, category: "Learning", completed: false, createdAt: new Date().toISOString() },
       ],
       habits: [
-        { id: uid(), name: "Morning workout", emoji: "💪", color: "neon-purple", history: {}, createdAt: new Date().toISOString() },
-        { id: uid(), name: "Read 30 min", emoji: "📚", color: "neon-blue", history: {}, createdAt: new Date().toISOString() },
-        { id: uid(), name: "Meditate", emoji: "🧘", color: "neon-cyan", history: {}, createdAt: new Date().toISOString() },
-        { id: uid(), name: "No social media", emoji: "🚫", color: "neon-pink", history: {}, createdAt: new Date().toISOString() },
+        { id: uid(), name: "Morning workout", emoji: "💪", color: "neon-purple", history: {}, createdAt: new Date().toISOString(), category: "fitness", difficulty: "medium" },
+        { id: uid(), name: "Read 30 min", emoji: "📚", color: "neon-blue", history: {}, createdAt: new Date().toISOString(), category: "learning", difficulty: "easy", goal: { target: 30, current: 0, unit: "pages" } },
+        { id: uid(), name: "Meditate", emoji: "🧘", color: "neon-cyan", history: {}, createdAt: new Date().toISOString(), category: "spiritual", difficulty: "easy" },
+        { id: uid(), name: "No social media", emoji: "🚫", color: "neon-pink", history: {}, createdAt: new Date().toISOString(), category: "personal", difficulty: "hard" },
       ],
       goals: [],
       lifeContext: {
@@ -249,7 +273,7 @@ export const useStore = create<State>()(
       playlistImports: [],
       xp: 1240,
       level: 7,
-      focusSessions: getInitialFocusSessions(), // deterministic, no random
+      focusSessions: getInitialFocusSessions(),
       streakCount: 12,
       wallpaper: {
         theme: "neon",
@@ -263,6 +287,7 @@ export const useStore = create<State>()(
       },
       userName: "Operator",
 
+      // Task actions
       addTask: (t) => set((s) => ({
         tasks: [{ ...t, id: uid(), completed: false, createdAt: new Date().toISOString() }, ...s.tasks],
       })),
@@ -280,12 +305,21 @@ export const useStore = create<State>()(
       deleteTask: (id) => set((s) => ({ tasks: s.tasks.filter((t) => t.id !== id) })),
       updateTask: (id, patch) => set((s) => ({ tasks: s.tasks.map((t) => t.id === id ? { ...t, ...patch } : t) })),
 
+      // Habit actions (extended)
       addHabit: (h) => set((s) => ({ habits: [...s.habits, { ...h, id: uid(), history: {}, createdAt: new Date().toISOString() }] })),
       toggleHabit: (id, date) => set((s) => ({
         habits: s.habits.map((h) => h.id === id ? { ...h, history: { ...h.history, [date]: !h.history[date] } } : h),
       })),
       deleteHabit: (id) => set((s) => ({ habits: s.habits.filter((h) => h.id !== id) })),
+      updateHabit: (id, patch) => set((s) => ({ habits: s.habits.map((h) => h.id === id ? { ...h, ...patch } : h) })),
+      updateHabitProgress: (id, current) => set((s) => ({
+        habits: s.habits.map((h) => h.id === id && h.goal ? { ...h, goal: { ...h.goal, current } } : h)
+      })),
+      addHabitNote: (id, date, note) => set((s) => ({
+        habits: s.habits.map((h) => h.id === id ? { ...h, notes: { ...h.notes, [date]: note } } : h)
+      })),
 
+      // Goal actions
       addGoal: (g) => set((s) => ({
         goals: [
           {
@@ -302,9 +336,7 @@ export const useStore = create<State>()(
           ...s.goals,
         ],
       })),
-      updateGoal: (id, patch) => set((s) => ({
-        goals: s.goals.map((g) => g.id === id ? { ...g, ...patch } : g),
-      })),
+      updateGoal: (id, patch) => set((s) => ({ goals: s.goals.map((g) => g.id === id ? { ...g, ...patch } : g) })),
       deleteGoal: (id) => set((s) => ({ goals: s.goals.filter((g) => g.id !== id) })),
       addGoalPhase: (goalId, phase) => set((s) => ({
         goals: s.goals.map((g) => {
@@ -326,17 +358,21 @@ export const useStore = create<State>()(
         }),
       })),
 
+      // Life context
       setLifeContext: (context) => set({ lifeContext: context }),
       updateLifeContext: (patch) => set((s) => ({ lifeContext: { ...s.lifeContext, ...patch } })),
 
+      // Briefings
       saveBriefing: (briefing) => set((s) => {
         const existing = s.dailyBriefings.filter((b) => b.date !== briefing.date);
         return { dailyBriefings: [briefing, ...existing] };
       }),
       getBriefing: (date) => get().dailyBriefings.find((b) => b.date === date),
 
+      // Behavior
       recordBehavior: (patch) => set((s) => ({ behavior: { ...s.behavior, ...patch } })),
 
+      // Assistant
       addAssistantMessage: (message) => set((s) => ({
         assistantMessages: [
           ...s.assistantMessages,
@@ -345,6 +381,7 @@ export const useStore = create<State>()(
       })),
       clearAssistantMessages: () => set({ assistantMessages: [] }),
 
+      // Playlist
       addPlaylistImport: (playlist) => set((s) => ({
         playlistImports: [
           {
@@ -358,6 +395,7 @@ export const useStore = create<State>()(
       })),
       clearPlaylistImports: () => set({ playlistImports: [] }),
 
+      // Focus, XP, etc.
       logFocus: (minutes) => set((s) => {
         const d = today();
         const existing = s.focusSessions.find((f) => f.date === d);
