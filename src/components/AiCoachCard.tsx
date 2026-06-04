@@ -8,6 +8,7 @@ interface AiCoachCardProps {
   weakArea?: string;
   suggestion?: string;
   tasksCompletedThisWeek?: number;
+  streakCount?: number;
 }
 
 export function AiCoachCard({
@@ -16,6 +17,7 @@ export function AiCoachCard({
   weakArea,
   suggestion,
   tasksCompletedThisWeek = 0,
+  streakCount = 0,
 }: AiCoachCardProps) {
   return (
     <motion.div
@@ -32,7 +34,6 @@ export function AiCoachCard({
         </div>
 
         <div className="space-y-4">
-          {/* Completion Rate */}
           <div className="flex items-center gap-3 p-3 rounded-lg bg-white/5 border border-neon-cyan/20">
             <CheckCircle2 className="h-5 w-5 text-neon-cyan flex-shrink-0" />
             <div>
@@ -41,7 +42,6 @@ export function AiCoachCard({
             </div>
           </div>
 
-          {/* Most Productive Hour */}
           {mostProductiveHour && (
             <div className="flex items-center gap-3 p-3 rounded-lg bg-white/5 border border-neon-cyan/20">
               <TrendingUp className="h-5 w-5 text-neon-cyan flex-shrink-0" />
@@ -52,7 +52,6 @@ export function AiCoachCard({
             </div>
           )}
 
-          {/* Weak Area */}
           {weakArea && (
             <div className="flex items-center gap-3 p-3 rounded-lg bg-white/5 border border-neon-pink/20">
               <AlertCircle className="h-5 w-5 text-neon-pink flex-shrink-0" />
@@ -63,7 +62,6 @@ export function AiCoachCard({
             </div>
           )}
 
-          {/* Suggestion */}
           {suggestion && (
             <div className="flex items-start gap-3 p-3 rounded-lg bg-gradient-to-r from-neon-cyan/10 to-transparent border border-neon-cyan/30">
               <Lightbulb className="h-5 w-5 text-neon-cyan flex-shrink-0 mt-0.5" />
@@ -74,7 +72,6 @@ export function AiCoachCard({
             </div>
           )}
 
-          {/* Stats */}
           <div className="grid grid-cols-2 gap-3 pt-2">
             <div className="p-3 rounded-lg bg-white/5 border border-white/10 text-center">
               <p className="text-xs text-muted-foreground">Tasks Done</p>
@@ -82,7 +79,9 @@ export function AiCoachCard({
             </div>
             <div className="p-3 rounded-lg bg-white/5 border border-white/10 text-center">
               <p className="text-xs text-muted-foreground">Streak</p>
-              <p className="text-lg font-bold text-neon-purple">12 days 🔥</p>
+              <p className="text-lg font-bold text-neon-purple">
+                {streakCount > 0 ? `${streakCount} day${streakCount === 1 ? "" : "s"}` : "Build one today"}
+              </p>
             </div>
           </div>
         </div>

@@ -12,7 +12,18 @@ export interface AiLifeContext {
 export interface AiContext {
   userName: string;
   today: string;
-  tasks: { id: string; title: string; dueDate?: string; priority: Priority; category: string; completed: boolean }[];
+  tasks: {
+    id: string;
+    title: string;
+    description?: string;
+    dueDate?: string;
+    dueTime?: string;
+    priority: Priority;
+    category: string;
+    focusMinutes?: number;
+    tags?: string[];
+    completed: boolean;
+  }[];
   habits: { id: string; name: string; emoji: string; doneToday: boolean }[];
   focusToday: number;
   streakCount: number;

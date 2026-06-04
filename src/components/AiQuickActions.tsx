@@ -7,12 +7,13 @@ interface AiQuickActionsProps {
 }
 
 const QUICK_ACTIONS = [
-  { id: "plan-day", label: "Plan My Day", icon: "📅" },
-  { id: "plan-week", label: "Plan My Week", icon: "📊" },
-  { id: "reschedule", label: "Reschedule Tasks", icon: "🔄" },
-  { id: "break-down", label: "Break Down Goal", icon: "🎯" },
-  { id: "prioritize", label: "Prioritize Tasks", icon: "⚡" },
-  { id: "analyze", label: "Productivity Report", icon: "📈" },
+  { id: "plan-day", label: "Plan Day", icon: "📅" },
+  { id: "plan-week", label: "Plan Week", icon: "📊" },
+  { id: "create", label: "Create Tasks", icon: "✨" },
+  { id: "edit", label: "Edit Task", icon: "✏️" },
+  { id: "reschedule", label: "Reschedule", icon: "🔄" },
+  { id: "prioritize", label: "Prioritize", icon: "⚡" },
+  { id: "analyze", label: "Coach Me", icon: "📈" },
 ];
 
 export function AiQuickActions({ onAction, isLoading = false }: AiQuickActionsProps) {

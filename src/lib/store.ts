@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { addLocalDays, formatLocalDate } from "@/lib/date";
 
 export type Priority = "low" | "medium" | "high";
 export type LifeCategory = "career" | "college" | "fitness" | "finance" | "personal";
@@ -193,16 +194,14 @@ interface State {
   setUserName: (name: string) => void;
 }
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => formatLocalDate(new Date());
 const uid = () => Math.random().toString(36).slice(2, 10);
 
 // Deterministic initial focus sessions (last 7 days with 0 minutes – no random)
 const getInitialFocusSessions = () => {
   const sessions = [];
   for (let i = 6; i >= 0; i--) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    sessions.push({ date: d.toISOString().slice(0, 10), minutes: 0 });
+    sessions.push({ date: addLocalDays(today(), -i), minutes: 0 });
   }
   return sessions;
 };

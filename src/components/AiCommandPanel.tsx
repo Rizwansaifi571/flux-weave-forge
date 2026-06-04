@@ -9,11 +9,11 @@ interface AiCommandPanelProps {
 }
 
 const SUGGESTED_COMMANDS = [
-  "Complete 25 DSA videos in 10 days",
-  "Build an Employee Management System",
-  "Plan my week",
-  "Reschedule my overdue tasks",
-  "I have 3 hours today",
+  "Plan 2 hours of study every day from 9 pm to 11 pm",
+  "Create a 10 day roadmap for my FSD course",
+  "Edit my Web Dev task and move it to tomorrow 7 pm",
+  "Reschedule all overdue tasks across this week",
+  "What should I do in the next 3 hours?",
 ];
 
 export function AiCommandPanel({ onSubmit, isLoading = false }: AiCommandPanelProps) {
@@ -42,12 +42,12 @@ export function AiCommandPanel({ onSubmit, isLoading = false }: AiCommandPanelPr
       transition={{ duration: 0.4 }}
     >
       <GlassCard className="mb-6 p-6 border-2 border-neon-cyan/30">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="h-10 w-10 grid place-items-center rounded-xl bg-gradient-to-br from-neon-cyan to-neon-purple glow-soft">
-            <Sparkles className="h-5 w-5 text-white" />
+          <div className="flex items-center gap-3 mb-4">
+            <div className="h-10 w-10 grid place-items-center rounded-xl bg-gradient-to-br from-neon-cyan to-neon-purple glow-soft">
+              <Sparkles className="h-5 w-5 text-white" />
+            </div>
+          <h3 className="text-lg font-semibold text-white">Task Autopilot</h3>
           </div>
-          <h3 className="text-lg font-semibold text-white">Ask Jarvis</h3>
-        </div>
 
         <form onSubmit={handleSubmit} className="space-y-3">
           <div className="relative">
@@ -55,7 +55,7 @@ export function AiCommandPanel({ onSubmit, isLoading = false }: AiCommandPanelPr
               value={command}
               onChange={(e) => setCommand(e.target.value)}
               onFocus={() => setShowSuggestions(true)}
-              placeholder="Paste a YouTube playlist, website link, or goal..."
+              placeholder="Tell the assistant to create, edit, delete, or reschedule tasks..."
               className="w-full bg-black/40 border border-neon-cyan/20 rounded-lg px-4 py-3 text-sm text-white placeholder:text-muted-foreground outline-none focus:border-neon-cyan/50 focus:ring-1 focus:ring-neon-cyan/30 transition resize-none min-h-[80px]"
             />
             <button
@@ -68,9 +68,9 @@ export function AiCommandPanel({ onSubmit, isLoading = false }: AiCommandPanelPr
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   Generating...
                 </>
-              ) : (
+                ) : (
                 <>
-                  Generate Plan
+                  Run Assistant
                   <ArrowRight className="h-3.5 w-3.5" />
                 </>
               )}

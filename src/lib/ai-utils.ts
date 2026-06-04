@@ -33,7 +33,7 @@ export function parseCommand(input: string): ParsedCommand {
     return { intent: "plan_week" };
   }
 
-  if (lower.includes("reschedule") || lower.includes("overdue") || lower.includes("couldn't")) {
+  if (lower.includes("reschedule") || lower.includes("couldn't") || lower.includes("missed")) {
     return { intent: "reschedule" };
   }
 
@@ -173,11 +173,12 @@ function generateDefaultPlan(): PlanItem[] {
 
 // Quick action command templates
 export const QUICK_ACTION_PROMPTS: Record<string, string> = {
-  "plan-day": "Plan my day - suggest the best tasks to work on given my available time",
-  "plan-week": "Create a weekly plan - break down my major goals into daily tasks",
-  reschedule:
-    "I missed some tasks yesterday - intelligently reschedule my work to keep deadlines intact",
+  "plan-day": "Plan my day and place work into real time blocks based on my available hours",
+  "plan-week": "Create a weekly plan and break my goals into balanced daily tasks",
+  reschedule: "Reschedule all overdue tasks and spread the workload across upcoming days",
   "break-down": "Take my current goals and break them into concrete, actionable tasks",
   prioritize: "What should I work on next? Analyze my priorities and suggest the best task",
-  analyze: "Analyze my productivity patterns this week - what can I improve?",
+  analyze: "Analyze my productivity patterns this week and tell me what to improve",
+  create: "Create a task plan for my goal and assign due dates and due times",
+  edit: "Edit one of my tasks and update its time, date, or details",
 };

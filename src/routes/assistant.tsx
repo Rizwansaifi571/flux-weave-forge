@@ -7,7 +7,8 @@ import { motion } from "framer-motion";
 import { Send, Sparkles, AlertTriangle, TrendingUp, Target } from "lucide-react";
 import { useMemo, useState } from "react";
 import { askAssistant } from "@/lib/api/assistant.functions";
-import type { AiAction, AiContext } from "@/lib/ai/ai-types";
+import type { AiContext } from "@/lib/ai/ai-types";
+import { applyAiActions } from "@/lib/ai/task-actions";
 import { importYouTubePlaylist } from "@/lib/api/youtube.functions";
 
 export const Route = createFileRoute("/assistant")({ component: AssistantPage });
@@ -64,9 +65,13 @@ function AssistantPage() {
     tasks: tasks.map((t) => ({
       id: t.id,
       title: t.title,
+      description: t.description,
       dueDate: t.dueDate,
+      dueTime: t.dueTime,
       priority: t.priority,
       category: t.category,
+      focusMinutes: t.focusMinutes,
+      tags: t.tags,
       completed: t.completed,
     })),
     habits: habits.map((h) => ({
@@ -119,44 +124,6 @@ function AssistantPage() {
     })),
   });
 
-  const applyActions = (actions: AiAction[]) => {
-    actions.forEach((action) => {
-      if (action.type === "create_task") {
-        addTask({
-          title: action.payload.title,
-          description: action.payload.description,
-          dueDate: action.payload.dueDate,
-          dueTime: action.payload.dueTime,
-          priority: action.payload.priority ?? "medium",
-          tags: action.payload.tags ?? [],
-          focusMinutes: action.payload.focusMinutes ?? 0,
-          category: action.payload.category ?? "Work",
-        });
-      }
-
-      if (action.type === "update_task") {
-        updateTask(action.payload.id, action.payload.patch);
-      }
-
-      if (action.type === "delete_task") {
-        deleteTask(action.payload.id);
-      }
-
-      if (action.type === "create_goal") {
-        addGoal({
-          title: action.payload.title,
-          description: action.payload.description ?? "",
-          deadline: action.payload.deadline,
-          category: action.payload.category ?? "career",
-        });
-      }
-
-      if (action.type === "set_context") {
-        updateLifeContext(action.payload);
-      }
-    });
-  };
-
   const send = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim()) return;
@@ -166,7 +133,13 @@ function AssistantPage() {
     try {
       const res = await askAssistant({ data: { message: q, context: buildContext() } });
       if (res.actions?.length) {
-        applyActions(res.actions);
+        applyAiActions(res.actions, {
+          addTask,
+          updateTask,
+          deleteTask,
+          addGoal,
+          updateLifeContext,
+        });
       }
       addAssistantMessage({ role: "ai", text: res.response });
     } catch (error) {

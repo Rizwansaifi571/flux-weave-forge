@@ -24,6 +24,7 @@ export interface TaskDraft {
   focusMinutes: number;
   category: string;
   dueDate?: string;
+  dueTime?: string;
 }
 
 export interface RoadmapSourceItem {

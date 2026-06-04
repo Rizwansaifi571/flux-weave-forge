@@ -9,8 +9,8 @@ import {
   type TaskPlanItem,
 } from "@/lib/ai/task-ai.shared";
 import { extractRoadmapSource } from "@/lib/api/roadmap-source.functions";
+import { addLocalDays, formatLocalDate } from "@/lib/date";
 
-const DAY_MS = 24 * 60 * 60 * 1000;
 const LECTURE_PATTERN = /(?:^|\s)(?:\d+\s+)?true\s+(\d{1,2}:\d{2})\s+Now playing\s+/gi;
 const ROADMAP_HINTS = [
   /this is all video/i,
@@ -56,6 +56,62 @@ function formatMinutes(minutes: number) {
 function extractRequestedDays(input: string) {
   const match = input.match(/(\d+)\s*days?\b/i);
   return match ? Number(match[1]) : undefined;
+}
+
+function extractTimeWindow(input: string) {
+  const match = input.match(
+    /(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s*(?:to|-|until)\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i,
+  );
+  if (!match) return null;
+
+  const parseClock = (value: string) => {
+    const timeMatch = value.trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i);
+    if (!timeMatch) return null;
+
+    let hours = Number(timeMatch[1]);
+    const minutes = Number(timeMatch[2] ?? 0);
+    const meridiem = timeMatch[3]?.toLowerCase();
+    if (Number.isNaN(hours) || Number.isNaN(minutes)) return null;
+    if (meridiem === "pm" && hours < 12) hours += 12;
+    if (meridiem === "am" && hours === 12) hours = 0;
+    return { hours, minutes };
+  };
+
+  const start = parseClock(match[1]);
+  const end = parseClock(match[2]);
+  if (!start || !end) return null;
+
+  return {
+    start: `${String(start.hours).padStart(2, "0")}:${String(start.minutes).padStart(2, "0")}`,
+    end: `${String(end.hours).padStart(2, "0")}:${String(end.minutes).padStart(2, "0")}`,
+  };
+}
+
+function timeToMinutes(time: string) {
+  const [hours, minutes] = time.split(":").map(Number);
+  return hours * 60 + minutes;
+}
+
+function minutesToTime(minutes: number) {
+  const normalized = ((minutes % (24 * 60)) + 24 * 60) % (24 * 60);
+  const hours = Math.floor(normalized / 60);
+  const mins = normalized % 60;
+  return `${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}`;
+}
+
+function getDueTimeForTask(
+  timeWindow: { start: string; end: string } | null,
+  index: number,
+  count: number,
+) {
+  if (!timeWindow) return undefined;
+  if (count <= 1) return timeWindow.start;
+
+  const startMinutes = timeToMinutes(timeWindow.start);
+  const endMinutes = timeToMinutes(timeWindow.end);
+  const span = endMinutes > startMinutes ? endMinutes - startMinutes : 24 * 60 - startMinutes + endMinutes;
+  const slot = Math.max(1, Math.floor(span / Math.max(1, count)));
+  return minutesToTime(startMinutes + slot * index);
 }
 
 function stripRoadmapPromptNoise(value: string) {
@@ -215,11 +271,15 @@ function normalizeItems(items: TaskPlanItem[]) {
   return cleaned.length > 0 ? cleaned : fallbackPlan("goal").items;
 }
 
-export function buildTaskDrafts(plan: { title: string; items: TaskPlanItem[] }): TaskDraft[] {
+export function buildTaskDrafts(
+  plan: { title: string; items: TaskPlanItem[] },
+  options?: { startDate?: string; timeWindow?: { start: string; end: string } | null },
+): TaskDraft[] {
   const tasks: TaskDraft[] = [];
+  const baseDate = options?.startDate ?? formatLocalDate();
 
   plan.items.forEach((item, dayIndex) => {
-    const dueDate = new Date(Date.now() + dayIndex * DAY_MS).toISOString().slice(0, 10);
+    const dueDate = addLocalDays(baseDate, dayIndex);
     const titles =
       item.taskTitles && item.taskTitles.length > 0
         ? item.taskTitles
@@ -237,6 +297,7 @@ export function buildTaskDrafts(plan: { title: string; items: TaskPlanItem[] }):
         focusMinutes: item.taskDurationsMinutes?.[index] ?? 45,
         category: plan.title,
         dueDate,
+        dueTime: getDueTimeForTask(options?.timeWindow ?? null, index, titles.length),
       });
     });
   });
@@ -247,6 +308,7 @@ export function buildTaskDrafts(plan: { title: string; items: TaskPlanItem[] }):
 export async function generateTaskPlan(goal: string, context: AiContext) {
   const requestedDays = extractRequestedDays(goal) ?? 7;
   const lectures = extractLectures(goal);
+  const timeWindow = extractTimeWindow(goal) ?? context.lifeContext.preferredStudyHours ?? null;
   const source = hasUrl(goal)
     ? await extractRoadmapSource({ data: { input: goal } }).catch(() => null)
     : null;
@@ -260,7 +322,7 @@ export async function generateTaskPlan(goal: string, context: AiContext) {
     const roadmap = buildLectureRoadmap(source.title || goal, sourceLectures, requestedDays);
     return {
       plan: roadmap,
-      tasks: buildTaskDrafts(roadmap),
+      tasks: buildTaskDrafts(roadmap, { startDate: context.today, timeWindow }),
       raw: JSON.stringify({ source, roadmap }),
     };
   }
@@ -269,7 +331,7 @@ export async function generateTaskPlan(goal: string, context: AiContext) {
     const roadmap = buildLectureRoadmap(goal, lectures, requestedDays);
     return {
       plan: roadmap,
-      tasks: buildTaskDrafts(roadmap),
+      tasks: buildTaskDrafts(roadmap, { startDate: context.today, timeWindow }),
       raw: JSON.stringify(roadmap),
     };
   }
@@ -290,6 +352,9 @@ export async function generateTaskPlan(goal: string, context: AiContext) {
     "Rules:",
     "- Prefer 3 to 8 phases.",
     "- Make each phase concrete and actionable.",
+    "- If the goal implies a daily recurring study schedule, keep the roadmap daily and make each phase represent one day with one main task.",
+    "- If the user gave a time window like 9 to 11 pm, assume daily tasks should fit inside that window.",
+    "- If the user says 'from today' or 'every day', start on today's local date and spread across consecutive days.",
     "- Use taskCount values that feel realistic for the goal.",
     "- Keep the response free of markdown and extra commentary.",
     "",
@@ -339,7 +404,7 @@ export async function generateTaskPlan(goal: string, context: AiContext) {
     totalTasks: normalized.items.reduce((sum, item) => sum + item.taskCount, 0),
   };
 
-  const tasks = buildTaskDrafts(plan);
+  const tasks = buildTaskDrafts(plan, { startDate: context.today, timeWindow });
 
   return { plan, tasks, raw };
 }
