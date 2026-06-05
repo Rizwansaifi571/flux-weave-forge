@@ -145,7 +145,7 @@ function FocusPage() {
 
   return (
     <AppShell>
-      <div className="p-8 max-w-5xl mx-auto">
+      <div className="p-4 sm:p-8 max-w-5xl mx-auto">
         <PageHeader title="Focus Mode" subtitle="Lock in. Distraction-free deep work." />
 
         {showWarning && (
@@ -173,7 +173,7 @@ function FocusPage() {
               ))}
             </div>
 
-            <div className="relative grid place-items-center w-[340px] h-[340px]">
+            <div className="relative grid place-items-center w-[280px] h-[280px] sm:w-[340px] sm:h-[340px]">
               <svg className="absolute inset-0 -rotate-90" viewBox="0 0 100 100">
                 <circle cx="50" cy="50" r="46" stroke="oklch(1 0 0 / 0.06)" strokeWidth="2" fill="none" />
                 <motion.circle
@@ -188,7 +188,7 @@ function FocusPage() {
                 />
               </svg>
               <div className="text-center">
-                <div className="text-7xl font-bold tracking-tighter tabular-nums">
+                <div className="text-6xl sm:text-7xl font-bold tracking-tighter tabular-nums">
                   {String(minutes).padStart(2, "0")}:{String(seconds).padStart(2, "0")}
                 </div>
                 <div className="text-xs uppercase tracking-[0.3em] text-muted-foreground mt-2">

@@ -213,7 +213,13 @@ function AssistantPage() {
     try {
       const res = await askAssistant({ data: { message: prompt, context: buildContext() } });
       if (res.actions?.length) {
-        applyActions(res.actions);
+        applyAiActions(res.actions, {
+          addTask,
+          updateTask,
+          deleteTask,
+          addGoal,
+          updateLifeContext,
+        });
       }
       addAssistantMessage({ role: "ai", text: res.response });
     } catch (error) {
@@ -226,7 +232,7 @@ function AssistantPage() {
 
   return (
     <AppShell>
-      <div className="p-8 max-w-6xl mx-auto">
+      <div className="p-4 sm:p-8 max-w-6xl mx-auto">
         <PageHeader title="AI Assistant" subtitle="Predictive, opinionated, and tuned to your productivity data." />
 
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6">

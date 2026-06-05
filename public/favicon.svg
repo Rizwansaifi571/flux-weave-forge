@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%">
+  <defs>
+    <linearGradient id="zap-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#a855f7" />
+      <stop offset="100%" stop-color="#06b6d4" />
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="4" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+  <rect x="5" y="5" width="90" height="90" rx="24" fill="#0d0a1a" stroke="rgba(255, 255, 255, 0.08)" stroke-width="2"/>
+  <path d="M55,15 L25,50 L48,50 L45,85 L75,50 L52,50 Z" fill="url(#zap-grad)" filter="url(#glow)"/>
+</svg>

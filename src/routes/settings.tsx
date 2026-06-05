@@ -11,7 +11,7 @@ function SettingsPage() {
 
   return (
     <AppShell>
-      <div className="p-8 max-w-3xl mx-auto">
+      <div className="p-4 sm:p-8 max-w-3xl mx-auto">
         <PageHeader title="Settings" subtitle="Tune your workspace." />
 
         <div className="space-y-4">
