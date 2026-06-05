@@ -1,6 +1,6 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import { motion, AnimatePresence } from "framer-motion";
-import { LayoutDashboard, ListTodo, Timer, Flame, Wand2, Sparkles, Settings, Zap, Menu, X } from "lucide-react";
+import { LayoutDashboard, ListTodo, Timer, Flame, Wand2, BarChart3, Settings, Zap, Menu, X } from "lucide-react";
 import { AmbientBackground } from "./AmbientBackground";
 import { useStore } from "@/lib/store";
 import { useEffect, useState } from "react";
@@ -11,7 +11,7 @@ const nav = [
   { to: "/focus", icon: Timer, label: "Focus" },
   { to: "/habits", icon: Flame, label: "Habits" },
   { to: "/wallpaper", icon: Wand2, label: "Wallpaper Studio" },
-  { to: "/assistant", icon: Sparkles, label: "AI Assistant" },
+  { to: "/analytics", icon: BarChart3, label: "Analytics" },
   { to: "/settings", icon: Settings, label: "Settings" },
 ] as const;
 

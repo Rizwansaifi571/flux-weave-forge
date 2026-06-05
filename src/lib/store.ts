@@ -234,6 +234,69 @@ const getInitialFocusSessions = () => {
   return sessions;
 };
 
+// Calculate streak count dynamically based on tasks, habits, and focus sessions
+const calculateStreak = (
+  tasks: Task[],
+  habits: Habit[],
+  focusSessions: { date: string; minutes: number }[]
+): number => {
+  const activeDates = new Set<string>();
+
+  // 1. Task completions
+  tasks.forEach((t) => {
+    if (t.completed) {
+      if (t.completedAt) {
+        activeDates.add(t.completedAt.slice(0, 10));
+      } else if (t.dueDate) {
+        activeDates.add(t.dueDate);
+      }
+    }
+  });
+
+  // 2. Habit completions
+  habits.forEach((h) => {
+    Object.entries(h.history).forEach(([date, done]) => {
+      if (done) activeDates.add(date);
+    });
+  });
+
+  // 3. Focus sessions
+  focusSessions.forEach((f) => {
+    if (f.minutes > 0) activeDates.add(f.date);
+  });
+
+  if (activeDates.size === 0) return 0;
+
+  const todayStr = formatLocalDate(new Date());
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayStr = formatLocalDate(yesterday);
+
+  // If neither today nor yesterday is active, streak is broken
+  if (!activeDates.has(todayStr) && !activeDates.has(yesterdayStr)) {
+    return 0;
+  }
+
+  let streak = 0;
+  const current = new Date();
+  current.setHours(0, 0, 0, 0);
+
+  // Start checking backward from today (or yesterday if today doesn't have activity yet)
+  let scanDate = activeDates.has(todayStr) ? current : yesterday;
+
+  for (let i = 0; i < 365; i++) {
+    const dateStr = formatLocalDate(scanDate);
+    if (activeDates.has(dateStr)) {
+      streak++;
+      scanDate.setDate(scanDate.getDate() - 1);
+    } else {
+      break;
+    }
+  }
+
+  return streak;
+};
+
 export const useStore = create<State>()(
   persist(
     (set, get) => ({
@@ -275,10 +338,10 @@ export const useStore = create<State>()(
         },
       ],
       playlistImports: [],
-      xp: 1240,
-      level: 7,
+      xp: 25, // Starts with 25 XP since 1 mock task is completed
+      level: 1, // Math.floor(25 / 500) + 1 = 1
       focusSessions: getInitialFocusSessions(),
-      streakCount: 12,
+      streakCount: 1, // 1 since 1 mock task is completed today
       wallpaper: {
         theme: "neon",
         opacity: 0.85,
@@ -292,29 +355,53 @@ export const useStore = create<State>()(
       userName: "Operator",
 
       // Task actions
-      addTask: (t) => set((s) => ({
-        tasks: [{ ...t, id: uid(), completed: false, createdAt: new Date().toISOString() }, ...s.tasks],
-      })),
-      batchAddTasks: (tasks) => set((s) => ({
-        tasks: [
+      addTask: (t) => set((s) => {
+        const tasks = [{ ...t, id: uid(), completed: false, createdAt: new Date().toISOString() }, ...s.tasks];
+        const streakCount = calculateStreak(tasks, s.habits, s.focusSessions);
+        return { tasks, streakCount };
+      }),
+      batchAddTasks: (tasks) => set((s) => {
+        const newTasks = [
           ...tasks.map((t) => ({ ...t, id: uid(), completed: false, createdAt: new Date().toISOString() })),
           ...s.tasks,
-        ],
-      })),
+        ];
+        const streakCount = calculateStreak(newTasks, s.habits, s.focusSessions);
+        return { tasks: newTasks, streakCount };
+      }),
       toggleTask: (id) => set((s) => {
         const tasks = s.tasks.map((t) => t.id === id ? { ...t, completed: !t.completed, completedAt: !t.completed ? new Date().toISOString() : undefined } : t);
         const becameDone = tasks.find((t) => t.id === id)?.completed;
-        return { tasks, xp: s.xp + (becameDone ? 25 : -25) };
+        const newXp = Math.max(0, s.xp + (becameDone ? 25 : -25));
+        const newLevel = Math.floor(newXp / 500) + 1;
+        const streakCount = calculateStreak(tasks, s.habits, s.focusSessions);
+        return { tasks, xp: newXp, level: newLevel, streakCount };
       }),
-      deleteTask: (id) => set((s) => ({ tasks: s.tasks.filter((t) => t.id !== id) })),
+      deleteTask: (id) => set((s) => {
+        const tasks = s.tasks.filter((t) => t.id !== id);
+        const streakCount = calculateStreak(tasks, s.habits, s.focusSessions);
+        return { tasks, streakCount };
+      }),
       updateTask: (id, patch) => set((s) => ({ tasks: s.tasks.map((t) => t.id === id ? { ...t, ...patch } : t) })),
 
       // Habit actions (extended)
-      addHabit: (h) => set((s) => ({ habits: [...s.habits, { ...h, id: uid(), history: {}, createdAt: new Date().toISOString() }] })),
-      toggleHabit: (id, date) => set((s) => ({
-        habits: s.habits.map((h) => h.id === id ? { ...h, history: { ...h.history, [date]: !h.history[date] } } : h),
-      })),
-      deleteHabit: (id) => set((s) => ({ habits: s.habits.filter((h) => h.id !== id) })),
+      addHabit: (h) => set((s) => {
+        const habits = [...s.habits, { ...h, id: uid(), history: {}, createdAt: new Date().toISOString() }];
+        const streakCount = calculateStreak(s.tasks, habits, s.focusSessions);
+        return { habits, streakCount };
+      }),
+      toggleHabit: (id, date) => set((s) => {
+        const habits = s.habits.map((h) => h.id === id ? { ...h, history: { ...h.history, [date]: !h.history[date] } } : h);
+        const becameDone = habits.find((h) => h.id === id)?.history[date];
+        const newXp = Math.max(0, s.xp + (becameDone ? 10 : -10));
+        const newLevel = Math.floor(newXp / 500) + 1;
+        const streakCount = calculateStreak(s.tasks, habits, s.focusSessions);
+        return { habits, xp: newXp, level: newLevel, streakCount };
+      }),
+      deleteHabit: (id) => set((s) => {
+        const habits = s.habits.filter((h) => h.id !== id);
+        const streakCount = calculateStreak(s.tasks, habits, s.focusSessions);
+        return { habits, streakCount };
+      }),
       updateHabit: (id, patch) => set((s) => ({ habits: s.habits.map((h) => h.id === id ? { ...h, ...patch } : h) })),
       updateHabitProgress: (id, current) => set((s) => ({
         habits: s.habits.map((h) => h.id === id && h.goal ? { ...h, goal: { ...h.goal, current } } : h)
@@ -406,7 +493,10 @@ export const useStore = create<State>()(
         const sessions = existing
           ? s.focusSessions.map((f) => f.date === d ? { ...f, minutes: f.minutes + minutes } : f)
           : [...s.focusSessions, { date: d, minutes }];
-        return { focusSessions: sessions, xp: s.xp + minutes * 2 };
+        const newXp = s.xp + minutes * 2;
+        const newLevel = Math.floor(newXp / 500) + 1;
+        const streakCount = calculateStreak(s.tasks, s.habits, sessions);
+        return { focusSessions: sessions, xp: newXp, level: newLevel, streakCount };
       }),
       setWallpaper: (patch) => set((s) => ({ wallpaper: { ...s.wallpaper, ...patch } })),
       setUserName: (name) => set({ userName: name }),

@@ -31,7 +31,7 @@
   };
 
   function Index() {
-    const { tasks, habits, focusSessions, xp, userName = "Explorer" } = useStore();
+    const { tasks, habits, focusSessions, xp, userName = "Explorer", toggleTask, toggleHabit } = useStore();
     const today = todayStr();
 
     // ========== 1. TASK COMPLETION STREAK (based on tasks only) ==========
@@ -354,7 +354,7 @@
                       />
                     </div>
                   </div>
-                  <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                  <div className="space-y-2 max-h-64 overflow-y-auto scrollbar-thin pr-1">
                     {todaysTasks.map((task, idx) => (
                       <motion.div
                         key={task.id}
@@ -362,13 +362,16 @@
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: idx * 0.03 }}
                         whileHover={{ x: 4 }}
-                        className="flex items-center gap-3 rounded-lg p-2 hover:bg-white/5 transition"
+                        onClick={() => toggleTask(task.id)}
+                        className="flex items-center gap-3 rounded-lg p-2 hover:bg-white/5 transition cursor-pointer select-none"
                       >
-                        <div className={`h-2 w-2 rounded-full ${
+                        <div className={`h-4 w-4 rounded-full border flex items-center justify-center transition-all ${
                           task.completed
-                            ? "bg-neon-cyan"
-                            : task.priority === "high" ? "bg-neon-pink" : "bg-neon-purple"
-                        }`} />
+                            ? "bg-neon-cyan border-neon-cyan text-background font-bold text-[10px]"
+                            : "border-white/20 hover:border-neon-cyan"
+                        }`}>
+                          {task.completed && "✓"}
+                        </div>
                         <span className={`text-sm flex-1 ${task.completed ? "line-through text-muted-foreground" : ""}`}>
                           {task.title}
                         </span>
@@ -388,16 +391,30 @@
                   View <ArrowUpRight className="h-3 w-3" />
                 </Link>
               </div>
-              <div className="space-y-2">
-                {habits.slice(0, 5).map((habit) => (
-                  <div key={habit.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-white/5">
-                    <span className="text-lg">{habit.emoji}</span>
-                    <span className="text-sm flex-1">{habit.name}</span>
-                    <div className={`h-2 w-2 rounded-full ${habit.history[today] ? "bg-neon-cyan glow-soft" : "bg-white/10"}`} />
-                  </div>
-                ))}
+              <div className="space-y-2 max-h-64 overflow-y-auto scrollbar-thin pr-1">
+                {habits.map((habit) => {
+                  const done = habit.history[today];
+                  return (
+                    <motion.div
+                      key={habit.id}
+                      whileHover={{ x: 4 }}
+                      onClick={() => toggleHabit(habit.id, today)}
+                      className="flex items-center gap-3 p-2 rounded-lg hover:bg-white/5 transition cursor-pointer select-none"
+                    >
+                      <span className="text-lg">{habit.emoji}</span>
+                      <span className="text-sm flex-1 truncate">{habit.name}</span>
+                      <div className={`h-4 w-4 rounded-full border flex items-center justify-center transition-all ${
+                        done
+                          ? "bg-neon-cyan border-neon-cyan text-background font-bold text-[10px]"
+                          : "border-white/20 hover:border-neon-cyan"
+                      }`}>
+                        {done && "✓"}
+                      </div>
+                    </motion.div>
+                  );
+                })}
                 {habits.length === 0 && (
-                  <p className="text-sm text-muted-foreground">No habits yet. Create one to build consistency.</p>
+                  <p className="text-sm text-muted-foreground text-center py-6">No habits yet. Create one to build consistency.</p>
                 )}
               </div>
               {totalHabits > 0 && (
