@@ -34,3 +34,4 @@ dist-ssr
 .vercel
 .env*
 dist-electron-build
+public/*.exe

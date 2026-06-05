@@ -37,7 +37,7 @@ var latestState = null;
 var latestFrame = null;
 var captureTimeout = null;
 var clockTimer = null;
-var settingsWin = null;
+var latestOrigin = null;
 var isDev = !import_electron.app.isPackaged;
 var WS_PORT = 34567;
 var userDir = import_electron.app.getPath("userData");
@@ -148,9 +148,13 @@ function startWS() {
       console.error("[ws] error", err);
     }
   });
-  wss.on("connection", (ws) => {
+  wss.on("connection", (ws, req) => {
     connectedClients++;
-    console.log(`[ws] browser client connected (${connectedClients})`);
+    const origin = req.headers.origin;
+    if (origin && !origin.includes("chrome-extension")) {
+      latestOrigin = origin;
+    }
+    console.log(`[ws] browser client connected (${connectedClients}) from ${origin}`);
     if (latestState) {
       ws.send(JSON.stringify({ type: "SYNC_STATE", state: latestState }));
     }
@@ -201,8 +205,10 @@ function createRenderWindow() {
   });
   if (isDev) {
     renderWindow.loadURL("http://localhost:3001");
+    renderWindow.webContents.openDevTools({ mode: "detach" });
   } else {
     renderWindow.loadFile(getRendererIndexPath());
+    renderWindow.webContents.openDevTools({ mode: "detach" });
   }
   renderWindow.webContents.on("did-finish-load", () => {
     console.log("[render] page loaded, scheduling initial capture\u2026");
@@ -243,33 +249,9 @@ function createTray() {
   tray.setContextMenu(menu);
 }
 function openSettings() {
-  if (settingsWin && !settingsWin.isDestroyed()) {
-    settingsWin.focus();
-    return;
-  }
-  settingsWin = new import_electron.BrowserWindow({
-    width: 1100,
-    height: 800,
-    title: "WallTask Companion \u2014 Settings",
-    autoHideMenuBar: true,
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-      preload: path.join(__dirname, "preload.cjs")
-    }
-  });
-  if (isDev) {
-    settingsWin.loadURL("http://localhost:8080");
-  } else {
-    settingsWin.loadFile(getRendererIndexPath()).then(() => {
-      settingsWin?.webContents.executeJavaScript(`
-        window.history.pushState({}, "", "/wallpaper");
-        window.dispatchEvent(new PopStateEvent("popstate"));
-      `);
-    });
-  }
-  settingsWin.on("closed", () => {
-    settingsWin = null;
+  const url = latestOrigin ? `${latestOrigin}/wallpaper` : "http://localhost:8080/wallpaper";
+  import_electron.shell.openExternal(url).catch((err) => {
+    console.error("[shell] failed to open external url", err);
   });
 }
 var gotLock = import_electron.app.requestSingleInstanceLock();

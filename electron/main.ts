@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, screen } from "electron";
+import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, screen, shell } from "electron";
 import * as path from "path";
 import { WebSocketServer } from "ws";
 import * as fs from "fs";
@@ -13,7 +13,7 @@ let latestState: any = null;
 let latestFrame: Electron.NativeImage | null = null;
 let captureTimeout: ReturnType<typeof setTimeout> | null = null;
 let clockTimer: ReturnType<typeof setInterval> | null = null;
-let settingsWin: BrowserWindow | null = null;
+let latestOrigin: string | null = null;
 
 const isDev = !app.isPackaged;
 const WS_PORT = 34567;
@@ -144,9 +144,13 @@ function startWS(): void {
     }
   });
 
-  wss.on("connection", (ws) => {
+  wss.on("connection", (ws, req) => {
     connectedClients++;
-    console.log(`[ws] browser client connected (${connectedClients})`);
+    const origin = req.headers.origin;
+    if (origin && !origin.includes("chrome-extension")) {
+      latestOrigin = origin;
+    }
+    console.log(`[ws] browser client connected (${connectedClients}) from ${origin}`);
 
     if (latestState) {
       ws.send(JSON.stringify({ type: "SYNC_STATE", state: latestState }));
@@ -211,8 +215,10 @@ function createRenderWindow(): void {
 
   if (isDev) {
     renderWindow.loadURL("http://localhost:3001");
+    renderWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
     renderWindow.loadFile(getRendererIndexPath());
+    renderWindow.webContents.openDevTools({ mode: 'detach' });
   }
 
   renderWindow.webContents.on("did-finish-load", () => {
@@ -262,36 +268,9 @@ function createTray(): void {
 }
 
 function openSettings(): void {
-  if (settingsWin && !settingsWin.isDestroyed()) {
-    settingsWin.focus();
-    return;
-  }
-
-  settingsWin = new BrowserWindow({
-    width: 1100,
-    height: 800,
-    title: "WallTask Companion — Settings",
-    autoHideMenuBar: true,
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-      preload: path.join(__dirname, "preload.cjs"),
-    },
-  });
-
-  if (isDev) {
-    settingsWin.loadURL("http://localhost:8080");
-  } else {
-    settingsWin.loadFile(getRendererIndexPath()).then(() => {
-      settingsWin?.webContents.executeJavaScript(`
-        window.history.pushState({}, "", "/wallpaper");
-        window.dispatchEvent(new PopStateEvent("popstate"));
-      `);
-    });
-  }
-
-  settingsWin.on("closed", () => {
-    settingsWin = null;
+  const url = latestOrigin ? `${latestOrigin}/wallpaper` : "http://localhost:8080/wallpaper";
+  shell.openExternal(url).catch((err) => {
+    console.error("[shell] failed to open external url", err);
   });
 }
 

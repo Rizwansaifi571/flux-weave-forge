@@ -5,5 +5,5 @@ export default defineConfig({
   format: ['cjs'],
   outDir: 'dist-electron',
   external: ['electron', 'ws', 'path', 'fs', 'child_process', 'crypto', 'url'],
-  clean: true,
+  clean: false,
 })
