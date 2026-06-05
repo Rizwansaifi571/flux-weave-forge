@@ -10,7 +10,9 @@
     "build:dev": "vite build --mode development",
     "preview": "npx srvx --static .vercel/output/static .vercel/output/functions/__server.func/index.mjs",
     "lint": "eslint .",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "dev:electron": "concurrently \"vite --config vite.electron.config.ts\" \"tsup --watch\" \"wait-on dist-electron/main.cjs && electron .\"",
+    "build:electron": "vite build --config vite.electron.config.ts && tsup && electron-builder"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -76,7 +78,12 @@
     "@types/node": "^22.16.5",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
+    "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^5.0.4",
+    "concurrently": "^10.0.3",
+    "cross-env": "^10.1.0",
+    "electron": "^42.3.3",
+    "electron-builder": "^26.8.1",
     "eslint": "^9.32.0",
     "eslint-config-prettier": "^10.1.1",
     "eslint-plugin-prettier": "^5.2.6",
@@ -85,8 +92,33 @@
     "globals": "^15.15.0",
     "nitro": "3.0.260429-beta",
     "prettier": "^3.7.3",
+    "tsup": "^8.5.1",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.56.1",
-    "vite": "^7.3.1"
+    "vite": "^7.3.1",
+    "wait-on": "^9.0.10",
+    "ws": "^8.21.0"
+  },
+  "main": "dist-electron/main.cjs",
+  "build": {
+    "appId": "com.walltask.companion",
+    "productName": "WallTask Companion",
+    "directories": {
+      "output": "dist-electron-build"
+    },
+    "files": [
+      "dist-electron/**/*",
+      "public/**/*"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "public/vite.svg"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "runAfterFinish": true
+    }
   }
 }

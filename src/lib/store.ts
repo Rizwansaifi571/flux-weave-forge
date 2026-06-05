@@ -429,3 +429,63 @@ export const motivationalQuotes = [
   "Win the morning, win the day.",
   "The cave you fear holds the treasure you seek.",
 ];
+
+// --- Live Sync Integration ---
+if (typeof window !== "undefined") {
+  // Check if we are running in the Electron renderer
+  const isElectron = (window as any).electronAPI !== undefined;
+
+  if (!isElectron) {
+    // We are in the browser (web app). Connect to local WS server.
+    const connectSync = () => {
+      try {
+        const ws = new WebSocket("ws://localhost:34567");
+
+        ws.onopen = () => {
+          console.log("Connected to WallTask Companion sync server.");
+          // Send current state initially
+          ws.send(JSON.stringify({ type: "SYNC_STATE", state: useStore.getState() }));
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type === "SYNC_STATE" && data.state) {
+              // Only apply if needed (avoid infinite loops)
+              // We'll trust the desktop app's state if we just connected
+              useStore.setState(data.state);
+            }
+          } catch (e) {
+            console.error("Failed to parse sync message", e);
+          }
+        };
+
+        ws.onclose = () => {
+          console.log("Disconnected from WallTask Companion. Retrying in 5s...");
+          setTimeout(connectSync, 5000);
+        };
+
+        ws.onerror = () => {
+          // Silent error for connection refused
+          ws.close();
+        };
+
+        // Subscribe to local store changes and broadcast them
+        let isSyncing = false;
+        useStore.subscribe((state) => {
+          if (isSyncing) return;
+          if (ws.readyState === WebSocket.OPEN) {
+            isSyncing = true;
+            ws.send(JSON.stringify({ type: "SYNC_STATE", state }));
+            setTimeout(() => { isSyncing = false; }, 50); // Simple debounce/throttle
+          }
+        });
+      } catch (e) {
+        // Ignore WebSocket creation errors
+      }
+    };
+    
+    // Delay connection slightly to ensure store is hydrated
+    setTimeout(connectSync, 1000);
+  }
+}

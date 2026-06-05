@@ -173,9 +173,9 @@ function WallpaperPage() {
       <div className="p-4 md:p-8 max-w-7xl mx-auto">
         <PageHeader
           title="Live Wallpaper Studio"
-          subtitle="Your productivity, painted onto your desktop. Updates in real-time."
+          subtitle="Turn your desktop into a live productivity dashboard. Download the Companion App to sync tasks and habits in real-time."
           action={
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap justify-end">
               <button
                 onClick={handleReset}
                 className="rounded-lg glass px-4 py-2 text-xs font-medium text-white flex items-center gap-2 hover:bg-white/10 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-purple-500"
@@ -183,17 +183,30 @@ function WallpaperPage() {
               >
                 <RefreshCw className="h-3.5 w-3.5" /> Reset
               </button>
+              
+              <a
+                href="/WallTask-Companion-Setup.exe"
+                download
+                className="rounded-lg bg-gradient-to-r from-neon-purple to-neon-blue px-4 py-2 text-xs font-medium text-white flex items-center gap-2 shadow-[0_0_15px_rgba(192,132,252,0.5)] hover:shadow-[0_0_25px_rgba(192,132,252,0.8)] transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                onClick={(e) => {
+                  // If running locally, this file might not exist. We can show an alert or just let it try to download.
+                  // For a real app, this links to the Github Release or Vercel static file.
+                }}
+              >
+                <Download className="h-3.5 w-3.5" /> Download for Windows
+              </a>
+
               <button
                 onClick={handleExport}
                 disabled={isExporting}
                 className={`
-                  rounded-lg bg-gradient-primary px-4 py-2 text-xs font-medium text-white flex items-center gap-2 shadow-md
+                  rounded-lg bg-white/10 px-4 py-2 text-xs font-medium text-white flex items-center gap-2 shadow-sm
                   transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50
-                  ${isExporting ? "cursor-wait" : "hover:opacity-90 hover:shadow-lg active:scale-95"}
+                  ${isExporting ? "cursor-wait" : "hover:bg-white/20 active:scale-95"}
                 `}
                 aria-label="Export wallpaper as PNG"
               >
-                <Download className="h-3.5 w-3.5" /> {isExporting ? "Exporting..." : "Export Wallpaper"}
+                {isExporting ? "Exporting..." : "Export PNG"}
               </button>
             </div>
           }
