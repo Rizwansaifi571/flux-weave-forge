@@ -28,6 +28,8 @@ var path = __toESM(require("path"), 1);
 var import_ws = require("ws");
 var fs = __toESM(require("fs"), 1);
 var import_child_process = require("child_process");
+var captureInProgress = false;
+var connectedClients = 0;
 var renderWindow = null;
 var tray = null;
 var wss = null;
@@ -35,36 +37,58 @@ var latestState = null;
 var latestFrame = null;
 var captureTimeout = null;
 var clockTimer = null;
+var settingsWin = null;
 var isDev = !import_electron.app.isPackaged;
 var WS_PORT = 34567;
+var DEV_WALLPAPER_URL = "http://localhost:3001/wallpaper";
+var DEV_SETTINGS_URL = "http://localhost:8080/wallpaper";
+var PROD_SETTINGS_URL = "https://roadmapai-puce.vercel.app/wallpaper";
 var userDir = import_electron.app.getPath("userData");
 var STORE_FILE = path.join(userDir, "walltask-state.json");
 var WALLPAPER_FILE = path.join(userDir, "walltask-wallpaper.png");
 var WP_SCRIPT_FILE = path.join(userDir, "set-wallpaper.ps1");
+function getRendererIndexPath() {
+  return path.join(__dirname, "renderer", "index.html");
+}
 function loadState() {
   try {
     if (fs.existsSync(STORE_FILE)) {
       latestState = JSON.parse(fs.readFileSync(STORE_FILE, "utf-8"));
     }
   } catch {
+    latestState = null;
   }
 }
 function saveState(state) {
   latestState = state;
   try {
-    fs.writeFileSync(STORE_FILE, JSON.stringify(state));
-  } catch {
+    fs.writeFileSync(STORE_FILE, JSON.stringify(state, null, 2), "utf-8");
+  } catch (err) {
+    console.error("[state] save failed", err);
   }
 }
+function broadcastState(state) {
+  if (!wss) return;
+  const payload = JSON.stringify({ type: "SYNC_STATE", state });
+  wss.clients.forEach((client) => {
+    if (client.readyState === 1) {
+      client.send(payload);
+    }
+  });
+}
 function applyWallpaper() {
-  const wp = WALLPAPER_FILE.replace(/\//g, "\\\\");
+  if (process.platform !== "win32") {
+    return;
+  }
+  const wp = WALLPAPER_FILE.replace(/\//g, "\\");
   const script = [
     'Add-Type @"',
-    "using System;using System.Runtime.InteropServices;",
-    "public class W{",
-    '  [DllImport("user32.dll",CharSet=CharSet.Auto)]',
-    "  static extern int SystemParametersInfo(int a,int b,string c,int d);",
-    "  public static void Set(string p){SystemParametersInfo(0x0014,0,p,3);}",
+    "using System;",
+    "using System.Runtime.InteropServices;",
+    "public class W {",
+    '  [DllImport("user32.dll", CharSet = CharSet.Auto)]',
+    "  static extern int SystemParametersInfo(int a, int b, string c, int d);",
+    "  public static void Set(string p) { SystemParametersInfo(0x0014, 0, p, 3); }",
     "}",
     '"@',
     `[W]::Set("${wp}")`
@@ -79,36 +103,48 @@ function applyWallpaper() {
       }
     );
   } catch (e) {
-    console.error("[wallpaper] script write failed", e.message);
+    console.error("[wallpaper] script write failed", e?.message ?? e);
   }
 }
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 function scheduleCapture() {
+  if (captureInProgress) return;
   if (captureTimeout) clearTimeout(captureTimeout);
   captureTimeout = setTimeout(async () => {
     if (!renderWindow || renderWindow.isDestroyed()) return;
-    renderWindow.webContents.send("sync-state", latestState);
-    renderWindow.webContents.invalidate();
-    await new Promise((r) => setTimeout(r, 1500));
-    if (latestFrame && !latestFrame.isEmpty()) {
-      try {
+    captureInProgress = true;
+    try {
+      if (latestState) {
+        renderWindow.webContents.send("sync-state", latestState);
+        broadcastState(latestState);
+      }
+      renderWindow.webContents.invalidate();
+      await wait(900);
+      if (latestFrame && !latestFrame.isEmpty()) {
         fs.writeFileSync(WALLPAPER_FILE, latestFrame.toPNG());
         applyWallpaper();
-        console.log("[wallpaper] updated successfully");
-      } catch (e) {
-        console.error("[capture]", e.message);
+        console.log("[wallpaper] updated");
+      } else {
+        console.warn("[wallpaper] skipped - no frame captured");
       }
+    } catch (err) {
+      console.error("[capture]", err);
+    } finally {
+      captureInProgress = false;
     }
-  }, 800);
+  }, 250);
 }
 function startWS() {
   try {
     wss = new import_ws.WebSocketServer({ port: WS_PORT, host: "127.0.0.1" });
   } catch (e) {
-    console.error("[ws] failed to create server", e.message);
+    console.error("[ws] failed to create server", e?.message ?? e);
     return;
   }
   wss.on("error", (err) => {
-    if (err.code === "EADDRINUSE") {
+    if (err?.code === "EADDRINUSE") {
       console.warn(`[ws] Port ${WS_PORT} busy, retrying in 3s\u2026`);
       setTimeout(() => {
         try {
@@ -117,10 +153,13 @@ function startWS() {
         }
         startWS();
       }, 3e3);
+    } else {
+      console.error("[ws] error", err);
     }
   });
   wss.on("connection", (ws) => {
-    console.log("[ws] browser client connected");
+    connectedClients++;
+    console.log(`[ws] browser client connected (${connectedClients})`);
     if (latestState) {
       ws.send(JSON.stringify({ type: "SYNC_STATE", state: latestState }));
     }
@@ -134,31 +173,48 @@ function startWS() {
       } catch {
       }
     });
+    ws.on("close", () => {
+      connectedClients = Math.max(0, connectedClients - 1);
+      console.log(`[ws] browser client disconnected (${connectedClients})`);
+    });
   });
   console.log(`[ws] server listening on ws://127.0.0.1:${WS_PORT}`);
 }
 function createRenderWindow() {
-  const { width, height } = import_electron.screen.getPrimaryDisplay().size;
+  const display = import_electron.screen.getPrimaryDisplay();
+  const width = display.bounds.width;
+  const height = display.bounds.height;
   renderWindow = new import_electron.BrowserWindow({
     width,
     height,
     show: false,
+    backgroundColor: "#0a0a0f",
     webPreferences: {
       offscreen: true,
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      backgroundThrottling: false
     }
   });
   renderWindow.webContents.setFrameRate(1);
   renderWindow.webContents.on("paint", (_e, _dirty, image) => {
     latestFrame = image;
   });
-  const url = isDev ? "http://localhost:3001" : `file://${path.join(__dirname, "../renderer/index.html").replace(/\\/g, "/")}`;
-  renderWindow.loadURL(url);
+  renderWindow.webContents.on("did-fail-load", (_e, code, desc, url) => {
+    console.error("[render] did-fail-load", { code, desc, url });
+  });
+  renderWindow.webContents.on("render-process-gone", (_e, details) => {
+    console.error("[render] render-process-gone", details);
+  });
+  if (isDev) {
+    renderWindow.loadURL(DEV_WALLPAPER_URL);
+  } else {
+    renderWindow.loadFile(getRendererIndexPath());
+  }
   renderWindow.webContents.on("did-finish-load", () => {
     console.log("[render] page loaded, scheduling initial capture\u2026");
-    setTimeout(() => scheduleCapture(), 3e3);
+    setTimeout(() => scheduleCapture(), 1e3);
   });
   renderWindow.on("closed", () => {
     renderWindow = null;
@@ -170,7 +226,8 @@ function createTray() {
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const i = (y * size + x) * 4;
-      const cx = x - 7.5, cy = y - 7.5;
+      const cx = x - 7.5;
+      const cy = y - 7.5;
       const d = Math.sqrt(cx * cx + cy * cy);
       if (d < 6.5) {
         const edge = Math.max(0, 1 - Math.max(0, d - 5.5));
@@ -193,22 +250,27 @@ function createTray() {
   ]);
   tray.setContextMenu(menu);
 }
-var settingsWin = null;
 function openSettings() {
   if (settingsWin && !settingsWin.isDestroyed()) {
     settingsWin.focus();
     return;
   }
   settingsWin = new import_electron.BrowserWindow({
-    width: 600,
-    height: 500,
-    resizable: false,
+    width: 1100,
+    height: 800,
     title: "WallTask Companion \u2014 Settings",
     autoHideMenuBar: true,
-    webPreferences: { contextIsolation: true }
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      preload: path.join(__dirname, "preload.cjs")
+    }
   });
-  const url = isDev ? "http://localhost:8081/wallpaper" : "https://walltask.vercel.app/wallpaper";
-  settingsWin.loadURL(url);
+  if (isDev) {
+    settingsWin.loadURL(DEV_SETTINGS_URL);
+  } else {
+    settingsWin.loadURL(PROD_SETTINGS_URL);
+  }
   settingsWin.on("closed", () => {
     settingsWin = null;
   });
@@ -221,7 +283,10 @@ if (!gotLock) {
   import_electron.app.whenReady().then(() => {
     if (!isDev) {
       try {
-        import_electron.app.setLoginItemSettings({ openAtLogin: true, path: import_electron.app.getPath("exe") });
+        import_electron.app.setLoginItemSettings({
+          openAtLogin: true,
+          path: import_electron.app.getPath("exe")
+        });
       } catch {
       }
     }
@@ -230,9 +295,22 @@ if (!gotLock) {
     createRenderWindow();
     createTray();
     import_electron.ipcMain.handle("get-initial-state", () => latestState);
-    clockTimer = setInterval(() => scheduleCapture(), 6e4);
+    clockTimer = setInterval(() => {
+      const now = /* @__PURE__ */ new Date();
+      if (now.getMinutes() % 5 === 0) {
+        scheduleCapture();
+      }
+    }, 6e4);
     console.log("[boot] WallTask Companion started successfully");
   });
 }
 import_electron.app.on("window-all-closed", () => {
+});
+import_electron.app.on("before-quit", () => {
+  if (captureTimeout) clearTimeout(captureTimeout);
+  if (clockTimer) clearInterval(clockTimer);
+  try {
+    wss?.close();
+  } catch {
+  }
 });

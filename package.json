@@ -1,8 +1,12 @@
 {
-  "name": "tanstack_start_ts",
+  "name": "walltask-companion",
+  "version": "1.0.0",
+  "description": "Dynamic productivity wallpaper for Windows",
+  "author": "Rizwan",
   "private": true,
   "sideEffects": false,
   "type": "module",
+
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
@@ -11,9 +15,14 @@
     "preview": "npx srvx --static .vercel/output/static .vercel/output/functions/__server.func/index.mjs",
     "lint": "eslint .",
     "format": "prettier --write .",
+
     "dev:electron": "concurrently \"vite --config vite.electron.config.ts\" \"tsup --watch\" \"wait-on dist-electron/main.cjs && electron .\"",
-    "build:electron": "vite build --config vite.electron.config.ts && tsup && electron-builder"
+
+    "build:electron": "vite build --config vite.electron.config.ts && tsup && electron-builder",
+
+    "dist": "npm run build:electron"
   },
+
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
     "@radix-ui/react-accordion": "^1.2.12",
@@ -70,8 +79,10 @@
     "vaul": "^1.1.2",
     "vite-tsconfig-paths": "^6.0.2",
     "zod": "^3.24.2",
-    "zustand": "^5.0.14"
+    "zustand": "^5.0.14", 
+    "ws": "^8.21.0"
   },
+
   "devDependencies": {
     "@eslint/js": "^9.32.0",
     "@lovable.dev/vite-tanstack-config": "^2.1.1",
@@ -96,24 +107,37 @@
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.56.1",
     "vite": "^7.3.1",
-    "wait-on": "^9.0.10",
-    "ws": "^8.21.0"
+    "wait-on": "^9.0.10"
   },
+
   "main": "dist-electron/main.cjs",
+
   "build": {
     "appId": "com.walltask.companion",
     "productName": "WallTask Companion",
+
     "directories": {
       "output": "dist-electron-build"
     },
+
     "files": [
       "dist-electron/**/*",
-      "public/**/*"
+      "public/**/*",
+      "node_modules/ws/**/*",
+      "package.json"
     ],
+
+    "asar": true,
+
+    "extraMetadata": {
+      "main": "dist-electron/main.cjs"
+    },
+
     "win": {
       "target": "nsis",
       "icon": "public/vite.svg"
     },
+
     "nsis": {
       "oneClick": false,
       "perMachine": false,

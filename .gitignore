@@ -33,3 +33,4 @@ dist-ssr
 *.sw?
 .vercel
 .env*
+dist-electron-build
