@@ -116,12 +116,14 @@ Schema:
 }
 
 Rules:
-- Use a short premium title for "name".
+- Give the habit a premium, highly motivating, student-focused, and action-oriented name.
 - Do NOT copy the user's full sentence as the habit name.
-- Make it feel like a real habit title, not a command.
-- Example names: "English Practice", "Morning Workout", "DSA Revision", "Reading Sprint".
-- If the user says duration, use targetDays when it makes sense.
-- If the user says "daily", reflect that in description, not in the title.
+- Make it sound inspiring and exciting!
+- Examples: Convert "want to learn guitar" to "Guitar Mastery" or "Guitar Shred Session". Convert "placement prep" to "Placement Blueprint".
+- Choose a vibrant, matching emoji for the emoji field (e.g. 🎸, 🚀, 💻, 📚).
+- Provide a clear, actionable description (e.g., "Practice chord transitions and fingerstyle patterns daily").
+- Write a short, powerful "why" statement to motivate a student to complete it every single day (e.g., "Build muscle memory, master the fretboard, and develop a creative outlet").
+- If the user specifies a duration, map it to targetDays. If they say "daily", reflect that in the description.
 `;
 
 const CHAT_JSON_RULES = `
@@ -159,7 +161,7 @@ Rules:
 - If the user wants to mark a habit done/undone, intent = "toggle".
 - If the message is vague or too general like "all" or "those", intent = "advice" and reply with a short clarifying question.
 - Keep reply short, natural, and helpful.
-- For create/update, give the habit a clean premium name, not the user's exact sentence.
+- For create/update, give the habit a premium, highly motivating, student-focused, and action-oriented name with a perfect matched emoji. Do not just copy the user's exact query.
 - For update/delete/toggle, targetName should be the habit to act on.
 `;
 

@@ -1,7 +1,18 @@
 import type { AiAction, AiContext, AiResponse } from "@/lib/ai/ai-types";
 import { getGroqCompletion } from "@/lib/api/ai.server";
 
-function buildSystemPrompt(context: AiContext) {
+function buildSystemPrompt(context: AiContext, userMessage: string) {
+  if (
+    userMessage.includes("premium habit designer") ||
+    userMessage.includes("AI habit operating system")
+  ) {
+    return [
+      "You are a premium habit design assistant.",
+      "You must respond with valid JSON matching the requested schema.",
+      "No conversational text outside the JSON, no markdown formatting, no code fences, only the JSON object.",
+    ].join("\n");
+  }
+
   const contextJson = JSON.stringify(context, null, 2);
 
   return [
@@ -51,7 +62,7 @@ function normalizeActions(actions: unknown): AiAction[] {
 }
 
 export async function runAssistant(userMessage: string, context: AiContext): Promise<AiResponse> {
-  const systemPrompt = buildSystemPrompt(context);
+  const systemPrompt = buildSystemPrompt(context, userMessage);
   const raw = await getGroqCompletion({ userPrompt: userMessage, systemPrompt });
 
   if (!raw) {

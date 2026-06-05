@@ -134,7 +134,8 @@
 
     "win": {
       "target": "nsis",
-      "icon": "public/vite.svg"
+      "icon": "public/vite.svg",
+      "artifactName": "WallTask.Companion.${ext}"
     },
 
     "nsis": {
