@@ -31,7 +31,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Vercel
 .vercel
-.env*
-dist-electron-build
+
+# Electron
+dist-electron/
+dist-electron-build/
 public/*.exe

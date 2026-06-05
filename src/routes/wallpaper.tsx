@@ -185,7 +185,7 @@ function WallpaperPage() {
               </button>
               
               <a
-                href="https://github.com/Rizwansaifi571/flux-weave-forge/releases/latest/download/WallTask-Companion-Setup.exe"
+                href="https://github.com/Rizwansaifi571/flux-weave-forge/releases/latest/download/WallTask.Companion.exe"
                 download
                 target="_blank"
                 rel="noreferrer"
