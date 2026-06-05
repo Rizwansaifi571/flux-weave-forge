@@ -185,13 +185,11 @@ function WallpaperPage() {
               </button>
               
               <a
-                href="/WallTask-Companion-Setup.exe"
+                href="https://github.com/Rizwansaifi571/flux-weave-forge/releases/latest/download/WallTask-Companion-Setup.exe"
                 download
+                target="_blank"
+                rel="noreferrer"
                 className="rounded-lg bg-gradient-to-r from-neon-purple to-neon-blue px-4 py-2 text-xs font-medium text-white flex items-center gap-2 shadow-[0_0_15px_rgba(192,132,252,0.5)] hover:shadow-[0_0_25px_rgba(192,132,252,0.8)] transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                onClick={(e) => {
-                  // If running locally, this file might not exist. We can show an alert or just let it try to download.
-                  // For a real app, this links to the Github Release or Vercel static file.
-                }}
               >
                 <Download className="h-3.5 w-3.5" /> Download for Windows
               </a>

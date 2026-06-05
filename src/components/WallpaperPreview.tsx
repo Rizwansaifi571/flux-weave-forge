@@ -1,126 +1,228 @@
 import { useStore, motivationalQuotes, todayStr } from "@/lib/store";
-import { Flame, CheckCircle2, Clock, Target } from "lucide-react";
 import { useMemo } from "react";
 
-const themeBg: Record<string, string> = {
-  cyberpunk: "linear-gradient(135deg, #0a0014 0%, #1a0033 40%, #ff006e 100%)",
-  minimal: "linear-gradient(135deg, #0a0a0f 0%, #14141f 100%)",
-  neon: "linear-gradient(135deg, #0b0524 0%, #1a0a3a 50%, #001a3a 100%)",
-  glass: "linear-gradient(135deg, #1a1a2e 0%, #2d1b69 50%, #6a3093 100%)",
-  anime: "linear-gradient(135deg, #ff9a9e 0%, #fad0c4 30%, #a18cd1 100%)",
-  workspace: "linear-gradient(135deg, #1e293b 0%, #334155 100%)",
+const THEME_STYLES: Record<string, string> = {
+  neon: "#06060a",
+  cyberpunk: "#05000a",
+  minimal: "#000000",
+  glass: "#0a0614",
+  anime: "#140a14",
+  workspace: "#0f111a",
 };
 
-const accentColor: Record<string, string> = {
-  purple: "#c084fc",
-  blue: "#60a5fa",
-  cyan: "#22d3ee",
-  pink: "#f472b6",
+const ACCENT: Record<string, string> = {
+  purple: "#c084fc", blue: "#60a5fa", cyan: "#22d3ee", pink: "#f472b6",
+};
+
+const GLOW: Record<string, string> = {
+  purple: "rgba(192,132,252,0.4)", blue: "rgba(96,165,250,0.4)",
+  cyan: "rgba(34,211,238,0.4)", pink: "rgba(244,114,182,0.4)",
 };
 
 export function WallpaperPreview({ scale = 1 }: { scale?: number }) {
-  const { tasks, wallpaper, streakCount, focusSessions, userName } = useStore();
+  const { tasks, habits, wallpaper, streakCount, userName, level, xp } = useStore();
+  
   const quote = useMemo(() => motivationalQuotes[new Date().getDay() % motivationalQuotes.length], []);
   const today = todayStr();
-  const todays = tasks.filter((t) => !t.dueDate || t.dueDate === today);
-  const done = todays.filter((t) => t.completed).length;
-  const pct = todays.length ? Math.round((done / todays.length) * 100) : 0;
-  const focusToday = focusSessions.find((f) => f.date === today)?.minutes ?? 0;
-  const accent = accentColor[wallpaper.accent];
+  const todaysTasks = tasks.filter((t) => !t.completed && (!t.dueDate || t.dueDate === today)).slice(0, 5);
+  const todaysHabits = habits.slice(0, 5);
+  
+  const completedToday = tasks.filter(t => t.completed && t.completedAt && t.completedAt.startsWith(today)).length;
+  const totalToday = tasks.filter(t => t.dueDate === today || !t.dueDate).length;
+  const progressPct = totalToday > 0 ? Math.round((completedToday / totalToday) * 100) : 0;
+
+  const accent = ACCENT[wallpaper.accent] || ACCENT.purple;
+  const glow = GLOW[wallpaper.accent] || GLOW.purple;
+  
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const dateStr = now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
+  const greeting = (() => {
+    const h = now.getHours();
+    if (h < 12) return "Good morning";
+    if (h < 17) return "Good afternoon";
+    return "Good evening";
+  })();
+
+  const fontFamily = wallpaper.font === "mono" ? "'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace"
+    : wallpaper.font === "serif" ? "Georgia, 'Times New Roman', serif"
+    : "'Inter', 'Segoe UI', -apple-system, sans-serif";
+
+  const glassCard = {
+    background: "linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.005) 100%)",
+    backdropFilter: "blur(20px) saturate(150%)",
+    border: "1px solid rgba(255,255,255,0.08)",
+    borderRadius: `${1.5 * scale * 10}px`,
+    padding: `${2 * scale * 10}px`,
+    boxShadow: `0 ${3 * scale * 10}px ${6 * scale * 10}px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1)`,
+  };
 
   return (
     <div
-      className="relative w-full overflow-hidden rounded-xl"
+      className="relative w-full overflow-hidden"
       style={{
         aspectRatio: "16/10",
-        background: themeBg[wallpaper.theme],
+        background: THEME_STYLES[wallpaper.theme] || THEME_STYLES.neon,
+        fontFamily, color: "#fff",
         opacity: wallpaper.opacity,
-        fontFamily: wallpaper.font === "mono" ? "ui-monospace, monospace" : wallpaper.font === "serif" ? "Georgia, serif" : "inherit",
       }}
     >
-      <div className="absolute inset-0" style={{
-        background: `radial-gradient(circle at 20% 30%, ${accent}40, transparent 50%), radial-gradient(circle at 80% 80%, ${accent}30, transparent 50%)`,
+      <style>{`
+        @keyframes slow-spin {
+          0% { transform: rotate(0deg) scale(1); }
+          50% { transform: rotate(180deg) scale(1.1); }
+          100% { transform: rotate(360deg) scale(1); }
+        }
+      `}</style>
+      
+      {/* Ambient Orbs */}
+      <div style={{
+        position: "absolute", top: "-20%", left: "-10%", width: "60%", height: "60%", borderRadius: "50%",
+        background: `radial-gradient(circle, ${glow}, transparent 60%)`, filter: "blur(40px)", opacity: 0.7, mixBlendMode: "screen",
+        animation: "slow-spin 40s linear infinite",
       }} />
-      <div className="absolute inset-0 opacity-10" style={{
-        backgroundImage: "linear-gradient(rgba(255,255,255,.3) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.3) 1px, transparent 1px)",
-        backgroundSize: "40px 40px",
+      <div style={{
+        position: "absolute", bottom: "-30%", right: "-15%", width: "70%", height: "70%", borderRadius: "50%",
+        background: `radial-gradient(circle, ${accent}40, transparent 65%)`, filter: "blur(50px)", opacity: 0.6, mixBlendMode: "screen",
+        animation: "slow-spin 50s reverse linear infinite",
       }} />
 
-      <div className="relative h-full w-full text-white" style={{ padding: `${24 * scale}px` }}>
-        <div className="flex justify-between items-start">
+      {/* Grid overlay */}
+      <div className="absolute inset-0 opacity-[0.04] pointer-events-none" style={{
+        backgroundImage: "linear-gradient(rgba(255,255,255,.5) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.5) 1px, transparent 1px)",
+        backgroundSize: `${3 * scale * 10}px ${3 * scale * 10}px`,
+        maskImage: "radial-gradient(ellipse at center, transparent 20%, black 100%)",
+        WebkitMaskImage: "radial-gradient(ellipse at center, transparent 20%, black 100%)",
+      }} />
+
+      {/* UI Container */}
+      <div className="relative z-10 w-full h-full flex justify-between items-center box-border" style={{ padding: `${5 * scale * 10}px ${4 * scale * 10}px` }}>
+        
+        {/* Left Column */}
+        <div className="flex flex-col gap-6" style={{ width: "26%" }}>
           <div>
-            <div style={{ fontSize: `${14 * scale}px`, opacity: 0.7 }} suppressHydrationWarning>
-              {new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
+            <div style={{ fontSize: `${1.2 * scale * 10}px`, opacity: 0.6, textTransform: "uppercase", letterSpacing: "0.2em", fontWeight: 500, marginBottom: "4px" }} suppressHydrationWarning>
+              {dateStr}
             </div>
-            <div style={{ fontSize: `${42 * scale}px`, fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 }} suppressHydrationWarning>
-              {new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            <div style={{ fontSize: `${2.5 * scale * 10}px`, fontWeight: 300, lineHeight: 1.2 }} suppressHydrationWarning>
+              {greeting},<br/>
+              <span style={{ color: accent, fontWeight: 600 }}>{userName}</span>
+              <span style={{ marginLeft: "4px", fontSize: `${2 * scale * 10}px` }}>✨</span>
             </div>
-            <div style={{ fontSize: `${12 * scale}px`, opacity: 0.6, marginTop: 4 }}>Hello, {userName}.</div>
           </div>
-          {wallpaper.showStreak && (
-            <div className="flex items-center gap-1.5 rounded-full" style={{ padding: `${4 * scale}px ${10 * scale}px`, background: "rgba(255,255,255,.1)", backdropFilter: "blur(10px)" }}>
-              <Flame size={12 * scale} color={accent} />
-              <span style={{ fontSize: `${11 * scale}px`, fontWeight: 600 }}>{streakCount} day streak</span>
+
+          {wallpaper.showTasks && (
+            <div style={glassCard}>
+              <div style={{ fontSize: `${1.1 * scale * 10}px`, opacity: 0.5, textTransform: "uppercase", letterSpacing: "0.15em", marginBottom: "12px", display: "flex", alignItems: "center", gap: "6px" }}>
+                <span style={{ width: `${0.4 * scale * 10}px`, height: `${0.4 * scale * 10}px`, borderRadius: "50%", background: accent, boxShadow: `0 0 10px ${accent}` }} />
+                Today's Focus
+              </div>
+              <div className="flex flex-col gap-2">
+                {todaysTasks.length === 0 ? (
+                  <div style={{ opacity: 0.4, fontSize: `${1 * scale * 10}px`, padding: "4px 0" }}>All clear. Great job.</div>
+                ) : todaysTasks.map((t) => (
+                  <div key={t.id} style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <div style={{ width: `${1 * scale * 10}px`, height: `${1 * scale * 10}px`, borderRadius: "50%", border: `1px solid ${accent}60`, flexShrink: 0 }} />
+                    <span style={{ fontSize: `${1.05 * scale * 10}px`, opacity: 0.9, lineHeight: 1.3 }}>{t.title}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
 
-        {wallpaper.showStats && (
-          <div className="absolute" style={{ top: `${100 * scale}px`, right: `${24 * scale}px` }}>
-            <div className="relative grid place-items-center" style={{ width: `${90 * scale}px`, height: `${90 * scale}px` }}>
-              <svg className="absolute inset-0 -rotate-90" viewBox="0 0 100 100">
-                <circle cx="50" cy="50" r="42" stroke="rgba(255,255,255,.1)" strokeWidth="6" fill="none" />
-                <circle cx="50" cy="50" r="42" stroke={accent} strokeWidth="6" fill="none" strokeDasharray={`${(pct / 100) * 264} 264`} strokeLinecap="round" />
-              </svg>
-              <div className="text-center">
-                <div style={{ fontSize: `${20 * scale}px`, fontWeight: 700 }}>{pct}%</div>
-                <div style={{ fontSize: `${8 * scale}px`, opacity: 0.6 }}>TODAY</div>
+        {/* Center Time */}
+        <div className="flex flex-col items-center relative" style={{ top: "-10%" }}>
+          <div suppressHydrationWarning style={{
+            fontSize: `${14 * scale * 10}px`, fontWeight: 700, letterSpacing: "-0.04em",
+            lineHeight: 1, textShadow: `0 10px 40px ${accent}40`,
+            background: `linear-gradient(180deg, #ffffff 30%, rgba(255,255,255,0.4))`,
+            WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+          }}>
+            {timeStr}
+          </div>
+          {wallpaper.showQuote && (
+            <div suppressHydrationWarning style={{
+              fontSize: `${1.1 * scale * 10}px`, opacity: 0.5, fontStyle: "italic",
+              fontWeight: 300, letterSpacing: "0.05em", marginTop: "12px",
+              textAlign: "center", maxWidth: "80%"
+            }}>
+              "{quote}"
+            </div>
+          )}
+        </div>
+
+        {/* Right Column */}
+        <div className="flex flex-col gap-6 items-end" style={{ width: "24%" }}>
+          {wallpaper.showStats && (
+            <div style={{ ...glassCard, width: "100%", textAlign: "right" }}>
+              <div style={{ fontSize: `${0.9 * scale * 10}px`, opacity: 0.5, textTransform: "uppercase", letterSpacing: "0.15em", marginBottom: "4px" }}>
+                Operator Level {level}
+              </div>
+              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "flex-end", gap: "4px", marginBottom: "12px" }}>
+                <span style={{
+                  fontSize: `${3 * scale * 10}px`, fontWeight: 700,
+                  background: `linear-gradient(135deg, #fff, ${accent})`,
+                  WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+                  textShadow: `0 0 20px ${accent}40`
+                }}>{xp.toLocaleString()}</span>
+                <span style={{ fontSize: `${1.1 * scale * 10}px`, opacity: 0.6, fontWeight: 500 }}>XP</span>
+              </div>
+              
+              {wallpaper.showStreak && (
+                <div style={{
+                  display: "inline-flex", alignItems: "center", gap: "6px",
+                  background: "rgba(255,255,255,0.05)", borderRadius: `${1 * scale * 10}px`, padding: `${0.6 * scale * 10}px ${1 * scale * 10}px`,
+                  border: "1px solid rgba(255,255,255,0.05)", marginBottom: "16px"
+                }}>
+                  <span style={{ fontSize: `${1.2 * scale * 10}px`, filter: "drop-shadow(0 0 5px rgba(255,100,0,0.5))" }}>🔥</span>
+                  <span style={{ fontSize: `${1.1 * scale * 10}px`, fontWeight: 600 }}>{streakCount} Day Streak</span>
+                </div>
+              )}
+
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: `${0.8 * scale * 10}px`, opacity: 0.5, marginBottom: "4px" }}>
+                  <span>Daily Progress</span>
+                  <span>{progressPct}%</span>
+                </div>
+                <div style={{ width: "100%", height: `${0.3 * scale * 10}px`, background: "rgba(255,255,255,0.06)", borderRadius: "4px", overflow: "hidden" }}>
+                  <div style={{
+                    width: `${progressPct}%`, height: "100%",
+                    background: `linear-gradient(90deg, ${accent}, #fff)`,
+                    borderRadius: "4px", boxShadow: `0 0 5px ${accent}`
+                  }} />
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {wallpaper.showTasks && (
-          <div className="absolute" style={{ left: `${24 * scale}px`, bottom: `${100 * scale}px`, maxWidth: "55%" }}>
-            <div style={{ fontSize: `${10 * scale}px`, opacity: 0.5, textTransform: "uppercase", letterSpacing: "0.2em", marginBottom: `${8 * scale}px` }}>
-              Today's Mission
+          {wallpaper.showTasks && (
+            <div style={{ ...glassCard, width: "100%" }}>
+              <div style={{ fontSize: `${1.1 * scale * 10}px`, opacity: 0.5, textTransform: "uppercase", letterSpacing: "0.15em", marginBottom: "12px", display: "flex", alignItems: "center", gap: "6px" }}>
+                <span style={{ width: `${0.4 * scale * 10}px`, height: `${0.4 * scale * 10}px`, borderRadius: "50%", background: accent, boxShadow: `0 0 10px ${accent}` }} />
+                Daily Habits
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                {todaysHabits.map((h) => {
+                  const done = h.history[today];
+                  return (
+                    <div key={h.id} style={{
+                      display: "flex", alignItems: "center", gap: "6px",
+                      padding: `${0.7 * scale * 10}px ${1 * scale * 10}px`, borderRadius: `${1 * scale * 10}px`,
+                      background: done ? `linear-gradient(90deg, ${accent}15, transparent)` : "rgba(255,255,255,0.02)",
+                      border: `1px solid ${done ? accent + "30" : "rgba(255,255,255,0.03)"}`,
+                      borderLeft: `2px solid ${done ? accent : "transparent"}`,
+                    }}>
+                      <span style={{ fontSize: `${1.3 * scale * 10}px`, filter: done ? `drop-shadow(0 0 5px ${accent}40)` : "none" }}>{h.emoji}</span>
+                      <span style={{ fontSize: `${1.05 * scale * 10}px`, opacity: done ? 1 : 0.6, fontWeight: done ? 500 : 400 }}>{h.name}</span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: `${6 * scale}px` }}>
-              {todays.slice(0, 5).map((t) => (
-                <div key={t.id} className="flex items-center gap-2 rounded-lg" style={{ padding: `${6 * scale}px ${10 * scale}px`, background: "rgba(255,255,255,.07)", backdropFilter: "blur(10px)" }}>
-                  <CheckCircle2 size={12 * scale} color={t.completed ? accent : "rgba(255,255,255,.4)"} />
-                  <span style={{ fontSize: `${11 * scale}px`, textDecoration: t.completed ? "line-through" : "none", opacity: t.completed ? 0.5 : 1 }}>
-                    {t.title}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {wallpaper.showStats && (
-          <div className="absolute flex gap-2" style={{ left: `${24 * scale}px`, bottom: `${24 * scale}px` }}>
-            <Stat icon={<Clock size={12 * scale} color={accent} />} label="Focus" value={`${focusToday}m`} scale={scale} />
-            <Stat icon={<Target size={12 * scale} color={accent} />} label="Done" value={`${done}/${todays.length}`} scale={scale} />
-          </div>
-        )}
-
-        {wallpaper.showQuote && (
-          <div className="absolute" style={{ right: `${24 * scale}px`, bottom: `${24 * scale}px`, maxWidth: "40%", textAlign: "right" }}>
-            <div style={{ fontSize: `${11 * scale}px`, fontStyle: "italic", opacity: 0.7 }} suppressHydrationWarning>"{quote}"</div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
-    </div>
-  );
-}
-
-function Stat({ icon, label, value, scale }: { icon: React.ReactNode; label: string; value: string; scale: number }) {
-  return (
-    <div className="flex items-center gap-1.5 rounded-md" style={{ padding: `${4 * scale}px ${8 * scale}px`, background: "rgba(255,255,255,.07)", backdropFilter: "blur(10px)" }}>
-      {icon}
-      <span style={{ fontSize: `${10 * scale}px`, opacity: 0.6 }}>{label}</span>
-      <span style={{ fontSize: `${11 * scale}px`, fontWeight: 600 }}>{value}</span>
     </div>
   );
 }

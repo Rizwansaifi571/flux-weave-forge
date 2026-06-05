@@ -3,12 +3,12 @@ import { useStore, motivationalQuotes } from "@/lib/store";
 import { formatLocalDate } from "@/lib/date";
 
 const THEME_STYLES: Record<string, React.CSSProperties> = {
-  neon: { background: "linear-gradient(135deg, #0b0524 0%, #1a0a3a 40%, #001a3a 100%)" },
-  cyberpunk: { background: "linear-gradient(135deg, #0a0014 0%, #1a0033 50%, #2d0047 100%)" },
-  minimal: { background: "linear-gradient(135deg, #0a0a0f 0%, #14141f 100%)" },
-  glass: { background: "linear-gradient(135deg, #1a1a2e 0%, #2d1b69 50%, #6a3093 100%)" },
-  anime: { background: "linear-gradient(135deg, #2d1b4e 0%, #4a1942 50%, #1a1a2e 100%)" },
-  workspace: { background: "linear-gradient(135deg, #1e293b 0%, #334155 100%)" },
+  neon: { background: "#06060a" },
+  cyberpunk: { background: "#05000a" },
+  minimal: { background: "#000000" },
+  glass: { background: "#0a0614" },
+  anime: { background: "#140a14" },
+  workspace: { background: "#0f111a" },
 };
 
 const ACCENT: Record<string, string> = {
@@ -16,8 +16,8 @@ const ACCENT: Record<string, string> = {
 };
 
 const GLOW: Record<string, string> = {
-  purple: "rgba(192,132,252,0.15)", blue: "rgba(96,165,250,0.15)",
-  cyan: "rgba(34,211,238,0.15)", pink: "rgba(244,114,182,0.15)",
+  purple: "rgba(192,132,252,0.4)", blue: "rgba(96,165,250,0.4)",
+  cyan: "rgba(34,211,238,0.4)", pink: "rgba(244,114,182,0.4)",
 };
 
 export function WallpaperDashboard() {
@@ -41,7 +41,7 @@ export function WallpaperDashboard() {
   const accent = ACCENT[cfg.accent] || ACCENT.purple;
   const glow = GLOW[cfg.accent] || GLOW.purple;
   const todayStr = formatLocalDate(new Date());
-  const tasks = store.tasks.filter(t => !t.completed && (t.dueDate === todayStr || !t.dueDate)).slice(0, 6);
+  const tasks = store.tasks.filter(t => !t.completed && (t.dueDate === todayStr || !t.dueDate)).slice(0, 5);
   const habits = store.habits.slice(0, 5);
   const quote = motivationalQuotes[new Date().getDate() % motivationalQuotes.length];
   const completedToday = store.tasks.filter(t => t.completed && t.completedAt && t.completedAt.startsWith(todayStr)).length;
@@ -61,14 +61,14 @@ export function WallpaperDashboard() {
     : cfg.font === "serif" ? "Georgia, 'Times New Roman', serif"
     : "'Inter', 'Segoe UI', -apple-system, sans-serif";
 
-  // Shared card styles
-  const card: React.CSSProperties = {
-    background: "rgba(255,255,255,0.04)",
-    backdropFilter: "blur(24px)",
-    border: "1px solid rgba(255,255,255,0.07)",
-    borderRadius: "1.4vw",
-    padding: "2vw 2.5vw",
-    boxShadow: "0 8px 40px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.04)",
+  // Shared glassmorphism card style
+  const glassCard: React.CSSProperties = {
+    background: "linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.005) 100%)",
+    backdropFilter: "blur(40px) saturate(150%)",
+    border: "1px solid rgba(255,255,255,0.08)",
+    borderRadius: "1.5vw",
+    padding: "2vw",
+    boxShadow: "0 30px 60px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1)",
   };
 
   return (
@@ -77,161 +77,192 @@ export function WallpaperDashboard() {
       fontFamily, color: "#fff", position: "relative",
       ...THEME_STYLES[cfg.theme] || THEME_STYLES.neon,
     }}>
-      {/* Ambient glow orbs */}
-      <div style={{ position: "absolute", top: "-20%", left: "-10%", width: "55vw", height: "55vw", borderRadius: "50%", background: `radial-gradient(circle, ${glow}, transparent 70%)`, filter: "blur(100px)", pointerEvents: "none" }} />
-      <div style={{ position: "absolute", bottom: "-25%", right: "-8%", width: "50vw", height: "50vw", borderRadius: "50%", background: `radial-gradient(circle, ${glow}, transparent 65%)`, filter: "blur(120px)", pointerEvents: "none" }} />
-      <div style={{ position: "absolute", top: "40%", left: "50%", transform: "translate(-50%, -50%)", width: "30vw", height: "30vw", borderRadius: "50%", background: "radial-gradient(circle, rgba(99,102,241,0.06), transparent 70%)", filter: "blur(80px)", pointerEvents: "none" }} />
+      <style>{`
+        @keyframes slow-spin {
+          0% { transform: rotate(0deg) scale(1); }
+          50% { transform: rotate(180deg) scale(1.1); }
+          100% { transform: rotate(360deg) scale(1); }
+        }
+        @keyframes float-1 {
+          0% { transform: translate(0, 0); }
+          33% { transform: translate(3vw, -4vh); }
+          66% { transform: translate(-2vw, 2vh); }
+          100% { transform: translate(0, 0); }
+        }
+        @keyframes float-2 {
+          0% { transform: translate(0, 0); }
+          33% { transform: translate(-4vw, 3vh); }
+          66% { transform: translate(2vw, -3vh); }
+          100% { transform: translate(0, 0); }
+        }
+        .orb-1 {
+          position: absolute; top: -20%; left: -10%; width: 60vw; height: 60vw; border-radius: 50%;
+          background: radial-gradient(circle, ${glow}, transparent 60%);
+          filter: blur(80px); opacity: 0.7; mix-blend-mode: screen; pointer-events: none;
+          animation: slow-spin 40s linear infinite, float-1 20s ease-in-out infinite;
+        }
+        .orb-2 {
+          position: absolute; bottom: -30%; right: -15%; width: 70vw; height: 70vw; border-radius: 50%;
+          background: radial-gradient(circle, ${accent}40, transparent 65%);
+          filter: blur(100px); opacity: 0.6; mix-blend-mode: screen; pointer-events: none;
+          animation: slow-spin 50s reverse linear infinite, float-2 25s ease-in-out infinite;
+        }
+        .orb-3 {
+          position: absolute; top: 30%; left: 40%; width: 40vw; height: 40vw; border-radius: 50%;
+          background: radial-gradient(circle, rgba(255,255,255,0.03), transparent 70%);
+          filter: blur(60px); pointer-events: none;
+        }
+      `}</style>
+      
+      {/* Dynamic Ambient Background */}
+      <div className="orb-1" />
+      <div className="orb-2" />
+      <div className="orb-3" />
+      
+      {/* Subtle Grid overlay for texture */}
+      <div style={{
+        position: "absolute", inset: 0, opacity: 0.04, pointerEvents: "none",
+        backgroundImage: "linear-gradient(rgba(255,255,255,.5) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.5) 1px, transparent 1px)",
+        backgroundSize: "3vw 3vw",
+        maskImage: "radial-gradient(ellipse at center, transparent 20%, black 100%)",
+        WebkitMaskImage: "radial-gradient(ellipse at center, transparent 20%, black 100%)",
+      }} />
 
-      {/* Content */}
+      {/* Main UI Container */}
       <div style={{
         position: "relative", zIndex: 1, width: "100%", height: "100%",
-        display: "flex", flexDirection: "column", justifyContent: "space-between",
-        padding: "4.5vh 4.5vw", boxSizing: "border-box",
-        opacity: cfg.opacity,
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+        padding: "5vh 4vw", boxSizing: "border-box", opacity: cfg.opacity,
       }}>
-        {/* ═══ TOP ROW ═══ */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        
+        {/* Left Column: Greeting & Tasks */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "3vh", width: "24vw" }}>
           <div>
-            <div style={{
-              fontSize: "7.5vw", fontWeight: 700, letterSpacing: "-0.05em",
-              lineHeight: 1, textShadow: `0 0 120px ${accent}30`,
-              background: `linear-gradient(180deg, #ffffff 40%, rgba(255,255,255,0.6))`,
-              WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
-            }}>
-              {timeStr}
-            </div>
-            <div style={{
-              fontSize: "1.3vw", marginTop: "1vh", opacity: 0.55,
-              textTransform: "uppercase", letterSpacing: "0.25em", fontWeight: 500,
-            }}>
+            <div style={{ fontSize: "1.2vw", opacity: 0.6, textTransform: "uppercase", letterSpacing: "0.2em", fontWeight: 500, marginBottom: "1vh" }}>
               {dateStr}
             </div>
-            <div style={{ fontSize: "2.4vw", marginTop: "3.5vh", fontWeight: 300 }}>
-              {greeting},{" "}
+            <div style={{ fontSize: "2.5vw", fontWeight: 300, lineHeight: 1.2 }}>
+              {greeting},<br/>
               <span style={{ color: accent, fontWeight: 600 }}>{store.userName}</span>
               <span style={{ marginLeft: "0.5vw", fontSize: "2vw" }}>✨</span>
             </div>
           </div>
 
-          {/* Stats panel */}
-          {cfg.showStats && (
-            <div style={{ ...card, textAlign: "right", minWidth: "18vw" }}>
-              <div style={{ fontSize: "0.85vw", opacity: 0.5, textTransform: "uppercase", letterSpacing: "0.18em", fontWeight: 600, marginBottom: "0.5vh" }}>
-                Operator Status
+          {cfg.showTasks && (
+            <div style={glassCard}>
+              <div style={{ fontSize: "1.1vw", opacity: 0.5, textTransform: "uppercase", letterSpacing: "0.15em", marginBottom: "1.5vh", display: "flex", alignItems: "center", gap: "0.5vw" }}>
+                <span style={{ width: "0.4vw", height: "0.4vw", borderRadius: "50%", background: accent, boxShadow: `0 0 10px ${accent}` }} />
+                Today's Focus
               </div>
-              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "flex-end", gap: "0.4vw" }}>
-                <span style={{
-                  fontSize: "3.2vw", fontWeight: 700,
-                  background: `linear-gradient(135deg, #fff, ${accent})`,
-                  WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
-                }}>{store.xp.toLocaleString()}</span>
-                <span style={{ fontSize: "1.2vw", opacity: 0.6 }}>XP</span>
-              </div>
-              <div style={{ fontSize: "0.9vw", opacity: 0.5, marginTop: "0.3vh" }}>Level {store.level}</div>
-
-              {cfg.showStreak && (
-                <div style={{
-                  marginTop: "1.5vh", display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "0.5vw",
-                  background: "rgba(255,255,255,0.04)", borderRadius: "0.8vw", padding: "0.7vw 1.2vw",
-                  border: "1px solid rgba(255,255,255,0.05)",
-                }}>
-                  <span style={{ fontSize: "1.3vw" }}>🔥</span>
-                  <span style={{ fontSize: "1.2vw", fontWeight: 600 }}>{store.streakCount} Day Streak</span>
-                </div>
-              )}
-
-              {/* Progress bar */}
-              <div style={{ marginTop: "1.5vh" }}>
-                <div style={{ fontSize: "0.75vw", opacity: 0.4, textAlign: "right", marginBottom: "0.4vh" }}>
-                  {completedToday}/{totalToday} tasks · {progressPct}%
-                </div>
-                <div style={{ width: "100%", height: "0.35vw", background: "rgba(255,255,255,0.08)", borderRadius: "1vw", overflow: "hidden" }}>
-                  <div style={{
-                    width: `${progressPct}%`, height: "100%",
-                    background: `linear-gradient(90deg, ${accent}, ${accent}88)`,
-                    borderRadius: "1vw",
-                    transition: "width 0.5s ease",
-                  }} />
-                </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "1.2vh" }}>
+                {tasks.length === 0 ? (
+                  <div style={{ opacity: 0.4, fontSize: "1vw", padding: "1vh 0" }}>All clear. Great job.</div>
+                ) : tasks.map((t) => (
+                  <div key={t.id} style={{ display: "flex", alignItems: "center", gap: "0.8vw" }}>
+                    <div style={{ width: "1vw", height: "1vw", borderRadius: "50%", border: `2px solid ${accent}60`, flexShrink: 0 }} />
+                    <span style={{ fontSize: "1.05vw", opacity: 0.9, lineHeight: 1.3 }}>{t.title}</span>
+                  </div>
+                ))}
               </div>
             </div>
           )}
         </div>
 
-        {/* ═══ BOTTOM CARDS ═══ */}
-        <div style={{ display: "flex", gap: "2vw" }}>
-          {cfg.showTasks && (
-            <div style={{ ...card, flex: 1 }}>
-              <div style={{ fontSize: "1.3vw", fontWeight: 600, marginBottom: "2vh", display: "flex", alignItems: "center", gap: "0.7vw" }}>
-                <span style={{ width: "0.25vw", height: "1.6vw", background: accent, borderRadius: "2px", display: "inline-block" }} />
-                <span>Today's Focus</span>
-                <span style={{ fontSize: "0.85vw", opacity: 0.4, marginLeft: "auto" }}>{tasks.length} remaining</span>
+        {/* Center Column: Huge Time Display */}
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", position: "relative", top: "-5vh" }}>
+          <div style={{
+            fontSize: "12vw", fontWeight: 700, letterSpacing: "-0.04em",
+            lineHeight: 1, textShadow: `0 20px 60px ${accent}40`,
+            background: `linear-gradient(180deg, #ffffff 30%, rgba(255,255,255,0.4))`,
+            WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+          }}>
+            {timeStr}
+          </div>
+          {cfg.showQuote && (
+            <div style={{
+              fontSize: "1.1vw", opacity: 0.5, fontStyle: "italic",
+              fontWeight: 300, letterSpacing: "0.05em", marginTop: "2vh",
+              textAlign: "center", maxWidth: "35vw"
+            }}>
+              "{quote}"
+            </div>
+          )}
+        </div>
+
+        {/* Right Column: Status & Habits */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "3vh", width: "22vw", alignItems: "flex-end" }}>
+          
+          {cfg.showStats && (
+            <div style={{ ...glassCard, width: "100%", textAlign: "right" }}>
+              <div style={{ fontSize: "0.9vw", opacity: 0.5, textTransform: "uppercase", letterSpacing: "0.15em", marginBottom: "0.5vh" }}>
+                Operator Level {store.level}
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: "1.4vh" }}>
-                {tasks.length === 0 ? (
-                  <div style={{ opacity: 0.35, fontSize: "1.1vw", padding: "1vw 0" }}>All caught up! Great work today. ✨</div>
-                ) : (
-                  tasks.map((t, i) => (
-                    <div key={t.id} style={{ display: "flex", alignItems: "center", gap: "0.9vw" }}>
-                      <div style={{
-                        width: "1.3vw", height: "1.3vw", borderRadius: "50%",
-                        border: `2px solid ${accent}50`, flexShrink: 0,
-                      }} />
-                      <span style={{ fontSize: "1.15vw", opacity: 0.85 }}>{t.title}</span>
-                      {t.priority === "high" && (
-                        <span style={{
-                          fontSize: "0.65vw", padding: "0.15vw 0.5vw",
-                          background: "rgba(239,68,68,0.15)", color: "#f87171",
-                          borderRadius: "0.4vw", fontWeight: 600, textTransform: "uppercase",
-                          letterSpacing: "0.08em", marginLeft: "auto",
-                        }}>HIGH</span>
-                      )}
-                    </div>
-                  ))
-                )}
+              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "flex-end", gap: "0.4vw", marginBottom: "1.5vh" }}>
+                <span style={{
+                  fontSize: "3vw", fontWeight: 700,
+                  background: `linear-gradient(135deg, #fff, ${accent})`,
+                  WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+                  textShadow: `0 0 30px ${accent}40`
+                }}>{store.xp.toLocaleString()}</span>
+                <span style={{ fontSize: "1.1vw", opacity: 0.6, fontWeight: 500 }}>XP</span>
+              </div>
+              
+              {cfg.showStreak && (
+                <div style={{
+                  display: "inline-flex", alignItems: "center", gap: "0.6vw",
+                  background: "rgba(255,255,255,0.05)", borderRadius: "1vw", padding: "0.6vw 1vw",
+                  border: "1px solid rgba(255,255,255,0.05)", marginBottom: "2vh"
+                }}>
+                  <span style={{ fontSize: "1.2vw", filter: "drop-shadow(0 0 10px rgba(255,100,0,0.5))" }}>🔥</span>
+                  <span style={{ fontSize: "1.1vw", fontWeight: 600 }}>{store.streakCount} Day Streak</span>
+                </div>
+              )}
+
+              {/* Minimal Progress Bar */}
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.8vw", opacity: 0.5, marginBottom: "0.5vh" }}>
+                  <span>Daily Progress</span>
+                  <span>{progressPct}%</span>
+                </div>
+                <div style={{ width: "100%", height: "0.3vw", background: "rgba(255,255,255,0.06)", borderRadius: "1vw", overflow: "hidden" }}>
+                  <div style={{
+                    width: `${progressPct}%`, height: "100%",
+                    background: `linear-gradient(90deg, ${accent}, #fff)`,
+                    borderRadius: "1vw", boxShadow: `0 0 10px ${accent}`
+                  }} />
+                </div>
               </div>
             </div>
           )}
 
           {cfg.showTasks && (
-            <div style={{ ...card, flex: 1 }}>
-              <div style={{ fontSize: "1.3vw", fontWeight: 600, marginBottom: "2vh", display: "flex", alignItems: "center", gap: "0.7vw" }}>
-                <span style={{ width: "0.25vw", height: "1.6vw", background: accent, borderRadius: "2px", display: "inline-block" }} />
-                <span>Daily Habits</span>
-                <span style={{ fontSize: "0.85vw", opacity: 0.4, marginLeft: "auto" }}>{habits.length} tracked</span>
+            <div style={{ ...glassCard, width: "100%" }}>
+              <div style={{ fontSize: "1.1vw", opacity: 0.5, textTransform: "uppercase", letterSpacing: "0.15em", marginBottom: "1.5vh", display: "flex", alignItems: "center", gap: "0.5vw" }}>
+                <span style={{ width: "0.4vw", height: "0.4vw", borderRadius: "50%", background: accent, boxShadow: `0 0 10px ${accent}` }} />
+                Daily Habits
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: "1.2vh" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "1vh" }}>
                 {habits.map((h) => {
                   const done = h.history[todayStr];
                   return (
                     <div key={h.id} style={{
-                      display: "flex", alignItems: "center", gap: "0.9vw",
-                      padding: "0.6vw 1vw", borderRadius: "0.8vw",
-                      background: done ? `${accent}10` : "rgba(255,255,255,0.03)",
-                      border: `1px solid ${done ? accent + "25" : "rgba(255,255,255,0.04)"}`,
+                      display: "flex", alignItems: "center", gap: "0.8vw",
+                      padding: "0.7vw 1vw", borderRadius: "1vw",
+                      background: done ? `linear-gradient(90deg, ${accent}15, transparent)` : "rgba(255,255,255,0.02)",
+                      border: `1px solid ${done ? accent + "30" : "rgba(255,255,255,0.03)"}`,
+                      borderLeft: `2px solid ${done ? accent : "transparent"}`,
+                      transition: "all 0.3s ease"
                     }}>
-                      <span style={{ fontSize: "1.5vw" }}>{h.emoji}</span>
-                      <span style={{ fontSize: "1.15vw", opacity: done ? 1 : 0.8 }}>{h.name}</span>
-                      {done && <span style={{ marginLeft: "auto", fontSize: "1vw", color: accent }}>✓</span>}
+                      <span style={{ fontSize: "1.3vw", filter: done ? `drop-shadow(0 0 10px ${accent}40)` : "none" }}>{h.emoji}</span>
+                      <span style={{ fontSize: "1.05vw", opacity: done ? 1 : 0.6, fontWeight: done ? 500 : 400 }}>{h.name}</span>
                     </div>
                   );
                 })}
               </div>
             </div>
           )}
-        </div>
 
-        {/* ═══ FOOTER QUOTE ═══ */}
-        {cfg.showQuote && (
-          <div style={{ textAlign: "center", padding: "0 10vw" }}>
-            <div style={{
-              fontSize: "1.15vw", opacity: 0.4, fontStyle: "italic",
-              fontWeight: 300, letterSpacing: "0.03em",
-            }}>
-              "{quote}"
-            </div>
-          </div>
-        )}
+        </div>
       </div>
     </div>
   );
