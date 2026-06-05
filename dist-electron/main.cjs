@@ -40,9 +40,6 @@ var clockTimer = null;
 var settingsWin = null;
 var isDev = !import_electron.app.isPackaged;
 var WS_PORT = 34567;
-var DEV_WALLPAPER_URL = "http://localhost:3001/wallpaper";
-var DEV_SETTINGS_URL = "http://localhost:8080/wallpaper";
-var PROD_SETTINGS_URL = "https://roadmapai-puce.vercel.app/wallpaper";
 var userDir = import_electron.app.getPath("userData");
 var STORE_FILE = path.join(userDir, "walltask-state.json");
 var WALLPAPER_FILE = path.join(userDir, "walltask-wallpaper.png");
@@ -77,9 +74,6 @@ function broadcastState(state) {
   });
 }
 function applyWallpaper() {
-  if (process.platform !== "win32") {
-    return;
-  }
   const wp = WALLPAPER_FILE.replace(/\//g, "\\");
   const script = [
     'Add-Type @"',
@@ -106,9 +100,6 @@ function applyWallpaper() {
     console.error("[wallpaper] script write failed", e?.message ?? e);
   }
 }
-function wait(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 function scheduleCapture() {
   if (captureInProgress) return;
   if (captureTimeout) clearTimeout(captureTimeout);
@@ -121,7 +112,7 @@ function scheduleCapture() {
         broadcastState(latestState);
       }
       renderWindow.webContents.invalidate();
-      await wait(900);
+      await new Promise((r) => setTimeout(r, 700));
       if (latestFrame && !latestFrame.isEmpty()) {
         fs.writeFileSync(WALLPAPER_FILE, latestFrame.toPNG());
         applyWallpaper();
@@ -134,7 +125,7 @@ function scheduleCapture() {
     } finally {
       captureInProgress = false;
     }
-  }, 250);
+  }, 300);
 }
 function startWS() {
   try {
@@ -188,13 +179,11 @@ function createRenderWindow() {
     width,
     height,
     show: false,
-    backgroundColor: "#0a0a0f",
     webPreferences: {
       offscreen: true,
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
-      nodeIntegration: false,
-      backgroundThrottling: false
+      nodeIntegration: false
     }
   });
   renderWindow.webContents.setFrameRate(1);
@@ -207,8 +196,11 @@ function createRenderWindow() {
   renderWindow.webContents.on("render-process-gone", (_e, details) => {
     console.error("[render] render-process-gone", details);
   });
+  renderWindow.webContents.on("console-message", (_e, level, message, line, sourceId) => {
+    console.log(`[renderer:${level}] ${message} (${sourceId}:${line})`);
+  });
   if (isDev) {
-    renderWindow.loadURL(DEV_WALLPAPER_URL);
+    renderWindow.loadURL("http://localhost:3001");
   } else {
     renderWindow.loadFile(getRendererIndexPath());
   }
@@ -267,9 +259,14 @@ function openSettings() {
     }
   });
   if (isDev) {
-    settingsWin.loadURL(DEV_SETTINGS_URL);
+    settingsWin.loadURL("http://localhost:8080");
   } else {
-    settingsWin.loadURL(PROD_SETTINGS_URL);
+    settingsWin.loadFile(getRendererIndexPath()).then(() => {
+      settingsWin?.webContents.executeJavaScript(`
+        window.history.pushState({}, "", "/wallpaper");
+        window.dispatchEvent(new PopStateEvent("popstate"));
+      `);
+    });
   }
   settingsWin.on("closed", () => {
     settingsWin = null;
@@ -305,12 +302,4 @@ if (!gotLock) {
   });
 }
 import_electron.app.on("window-all-closed", () => {
-});
-import_electron.app.on("before-quit", () => {
-  if (captureTimeout) clearTimeout(captureTimeout);
-  if (clockTimer) clearInterval(clockTimer);
-  try {
-    wss?.close();
-  } catch {
-  }
 });
