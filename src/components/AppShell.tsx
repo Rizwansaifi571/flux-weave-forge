@@ -81,7 +81,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="glass rounded-xl p-4 space-y-2">
       <div className="flex items-center justify-between text-xs">
         <span className="text-muted-foreground">Level {level}</span>
-        <span className="text-gradient font-semibold">{xp} XP</span>
+        <span className="text-gradient font-semibold">{xp} FP</span>
       </div>
       <div className="h-1.5 w-full rounded-full bg-white/5 overflow-hidden">
         <motion.div

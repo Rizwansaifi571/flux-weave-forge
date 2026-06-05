@@ -29,7 +29,7 @@ function SettingsPage() {
             <h3 className="font-semibold mb-3">Gamification</h3>
             <div className="grid grid-cols-3 gap-3">
               <Stat label="Level" value={level} />
-              <Stat label="XP" value={xp} />
+              <Stat label="Flow Points" value={xp} />
               <Stat label="Streak" value={streakCount} />
             </div>
           </GlassCard>

@@ -204,7 +204,7 @@ export function WallpaperDashboard() {
                   WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
                   textShadow: `0 0 30px ${accent}40`
                 }}>{store.xp.toLocaleString()}</span>
-                <span style={{ fontSize: "1.1vw", opacity: 0.6, fontWeight: 500 }}>XP</span>
+                <span style={{ fontSize: "1.1vw", opacity: 0.6, fontWeight: 500 }}>FP</span>
               </div>
               
               {cfg.showStreak && (

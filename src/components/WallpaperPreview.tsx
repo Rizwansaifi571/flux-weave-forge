@@ -167,7 +167,7 @@ export function WallpaperPreview({ scale = 1 }: { scale?: number }) {
                   WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
                   textShadow: `0 0 2cqi ${accent}40`
                 }}>{xp.toLocaleString()}</span>
-                <span style={{ fontSize: "1.1cqi", opacity: 0.6, fontWeight: 500 }}>XP</span>
+                <span style={{ fontSize: "1.1cqi", opacity: 0.6, fontWeight: 500 }}>FP</span>
               </div>
               
               {wallpaper.showStreak && (

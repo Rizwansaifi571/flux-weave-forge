@@ -509,7 +509,7 @@
                     <div className="glass rounded-lg p-2.5">
                       <div className="flex items-center gap-1.5">
                         <Trophy className="h-3 w-3 text-neon-pink" />
-                        <span className="text-muted-foreground">XP</span>
+                        <span className="text-muted-foreground">FP</span>
                       </div>
                       <div className="text-base font-semibold mt-0.5">{xp}</div>
                     </div>
