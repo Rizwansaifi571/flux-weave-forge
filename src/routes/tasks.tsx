@@ -1106,23 +1106,30 @@ function TasksPage() {
   }, [tasks, now]);
 
 const rescheduleOverdueTasks = useCallback((): RescheduleResult => {
-  const overdueTasks = tasks
-    .filter((t) => isTaskOverdue(t, now))
-    .sort(
-      (a, b) =>
-        (a.dueDate ?? "").localeCompare(b.dueDate ?? "") ||
-        a.createdAt.localeCompare(b.createdAt)
-    );
-
-  if (overdueTasks.length === 0) {
+  // Find tasks that are actually overdue
+  const strictlyOverdueTasks = tasks.filter((t) => isTaskOverdue(t, now));
+  
+  if (strictlyOverdueTasks.length === 0) {
     const message = "No overdue tasks found.";
     setRescheduleSummary(message);
     window.setTimeout(() => setRescheduleSummary(null), 5000);
     return { moved: 0, summary: message, groups: [] };
   }
 
+  // Get the group keys (courses/categories) that have at least one overdue task
+  const overdueGroupKeys = new Set(strictlyOverdueTasks.map(getOverdueGroupKey));
+
+  // Collect ALL incomplete tasks that belong to those overdue groups
+  const allTasksToReschedule = tasks
+    .filter((t) => !t.completed && overdueGroupKeys.has(getOverdueGroupKey(t)))
+    .sort(
+      (a, b) =>
+        (a.dueDate ?? "").localeCompare(b.dueDate ?? "") ||
+        a.createdAt.localeCompare(b.createdAt)
+    );
+
   const startMinutes = toTimeMinutes(lifeContext.preferredStudyHours.start) ?? 540;
-  const totalMinutes = overdueTasks.reduce(
+  const totalMinutes = allTasksToReschedule.reduce(
     (sum, task) => sum + clampMinutes(task.focusMinutes || 30, 15, 240),
     0
   );
@@ -1139,7 +1146,7 @@ const rescheduleOverdueTasks = useCallback((): RescheduleResult => {
   }));
 
   const grouped = new Map<string, Task[]>();
-  for (const task of overdueTasks) {
+  for (const task of allTasksToReschedule) {
     const key = getOverdueGroupKey(task);
     const list = grouped.get(key) ?? [];
     list.push(task);

@@ -38,7 +38,13 @@ function SettingsPage() {
             <h3 className="font-semibold mb-2">Data</h3>
             <p className="text-xs text-muted-foreground mb-3">All data is stored locally in your browser. Clearing storage will reset the app.</p>
             <button
-              onClick={() => { if (confirm("Reset all data?")) { localStorage.removeItem("walltask-ai-store"); location.reload(); } }}
+              onClick={() => {
+                if (confirm("Are you sure you want to completely reset all your data? This cannot be undone.")) {
+                  useStore.persist.clearStorage();
+                  localStorage.removeItem("walltask-ai-store");
+                  setTimeout(() => location.reload(), 100);
+                }
+              }}
               className="rounded-lg glass-strong px-4 py-2 text-xs text-neon-pink hover:bg-white/10"
             >
               Reset all data
