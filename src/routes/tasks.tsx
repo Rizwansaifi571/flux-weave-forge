@@ -288,7 +288,128 @@ function TasksPage() {
     playlistImports: playlistImports.map(p=>({ id:p.id, title:p.title, items:p.items }))
   }),[assistantMessages,focusToday,goals,habits,lifeContext,playlistImports,stats.streak,tasks,userName]);
 
+  // ---------- Pasted list parser (handles multi-line YouTube copy-paste) ----------
+  // YouTube copy format puts each field on its own line:
+  //   54          ← index number
+  //   true        ← "in watch later" flag
+  //   22:22       ← duration
+  //   Now playing ← label (optional)
+  //   Performance: Reflow ... ← TITLE  ← this is what we want
+  // We group these into blocks and extract the title + duration from each block.
+  const handlePastedListCommand = useCallback((command: string) => {
+    // Broad intent check — covers "make", "create", "add", "today", "want", "complete", "watch", "study", "finish", "these", "task"
+    const hasPasteIntent = /\b(make|create|add|schedule|task|tasks|today|these|this|want|complete|finish|watch|study|learn)\b/i.test(command);
+    if (!hasPasteIntent) return null;
+
+    const rawLines = command.split(/\r?\n/).map(l => l.trim());
+
+    type ParsedItem = { title: string; durationMinutes: number | null };
+    const items: ParsedItem[] = [];
+
+    // ── Strategy 1: multi-line YouTube block (index / true|false / mm:ss / [Now playing] / title)
+    // Scan for blocks: a line that is JUST a number, followed by "true"/"false", then duration, then optional "Now playing", then title
+    let i = 0;
+    while (i < rawLines.length) {
+      const l0 = rawLines[i] ?? "";
+      const l1 = rawLines[i + 1] ?? "";
+      const l2 = rawLines[i + 2] ?? "";
+      const l3 = rawLines[i + 3] ?? "";
+      const l4 = rawLines[i + 4] ?? "";
+
+      const isIndex   = /^\d+$/.test(l0);
+      const isFlag    = /^(true|false)$/i.test(l1);
+      const isDur     = /^\d{1,2}:\d{2}(:\d{2})?$/.test(l2);
+
+      if (isIndex && isFlag && isDur) {
+        // Parse duration from l2
+        const dParts = l2.split(":").map(Number);
+        const durationMinutes = dParts.length === 3
+          ? dParts[0] * 60 + dParts[1]
+          : dParts[0] + Math.round(dParts[1] / 60);
+
+        // Check if next line is "Now playing" label (skip it)
+        const hasNowPlaying = /^now playing$/i.test(l3);
+        const titleLine = hasNowPlaying ? l4 : l3;
+
+        if (titleLine && titleLine.length > 3 && !/^\d+$/.test(titleLine) && !/^(true|false)$/i.test(titleLine)) {
+          // Clean up "|| Series Name" suffixes that clutter the title
+          const cleanTitle = titleLine.replace(/\s*\|\|.*$/, "").trim();
+          items.push({ title: cleanTitle, durationMinutes });
+          i += hasNowPlaying ? 5 : 4;
+          continue;
+        }
+      }
+      i++;
+    }
+
+    // ── Strategy 2 (fallback): single-line numbered format "54. Title" or "54) Title"
+    if (items.length === 0) {
+      for (const line of rawLines) {
+        const m = line.match(/^\d+[.)]\s+(.{4,})$/);
+        if (m) items.push({ title: m[1].trim(), durationMinutes: null });
+      }
+    }
+
+    // ── Strategy 3 (fallback): pure title lines (3+ words, no pure numbers, no flags)
+    if (items.length === 0) {
+      const skipPatterns = /^(true|false|now playing|\d+|make|create|add|task|want|complete|today|these|this|watch|study|learn|finish|schedule)$/i;
+      const durationPattern = /^\d{1,2}:\d{2}(:\d{2})?$/;
+      for (const line of rawLines) {
+        if (line.length < 8) continue;
+        if (skipPatterns.test(line)) continue;
+        if (durationPattern.test(line)) continue;
+        if (/^https?:\/\//i.test(line)) continue;
+        // Must look like a real title: at least one space or word longer than 6 chars
+        if (/\s/.test(line) || line.length > 10) {
+          items.push({ title: line.replace(/\s*\|\|.*$/, "").trim(), durationMinutes: null });
+        }
+      }
+    }
+
+    if (items.length < 1) return null;
+
+    const daysMatch = command.match(/(\d+)\s*days?\b/i);
+    const targetDays = daysMatch ? parseInt(daysMatch[1]) : 1;
+
+    const tasksDrafts: ReturnType<typeof buildTaskDrafts> = items.map((item, idx) => ({
+      title: item.title,
+      description: item.durationMinutes ? `Duration: ${item.durationMinutes} min` : `Item ${idx + 1}`,
+      priority: "medium" as const,
+      tags: ["ai-generated"],
+      focusMinutes: item.durationMinutes ?? 45,
+      category: "Study",
+      dueDate: addLocalDays(todayStr, Math.floor(idx / Math.ceil(items.length / targetDays))),
+      dueTime: (() => {
+        const tw = lifeContext.preferredStudyHours;
+        if (!tw) return undefined;
+        const [sh, sm] = tw.start.split(":").map(Number);
+        const [eh, em] = tw.end.split(":").map(Number);
+        const startMins = sh * 60 + sm;
+        const endMins = eh * 60 + em;
+        const span = endMins > startMins ? endMins - startMins : 24 * 60 - startMins + endMins;
+        const perDay = Math.ceil(items.length / targetDays);
+        const slot = Math.max(1, Math.floor(span / Math.max(1, perDay)));
+        const offset = (startMins + slot * (idx % perDay)) % (24 * 60);
+        return `${String(Math.floor(offset / 60)).padStart(2, "0")}:${String(offset % 60).padStart(2, "0")}`;
+      })(),
+    }));
+
+    const totalMinutes = items.reduce((s, v) => s + (v.durationMinutes ?? 45), 0);
+    const plan: GeneratedPlan = {
+      title: "Study Sessions",
+      description: `${items.length} session${items.length > 1 ? "s" : ""} scheduled over ${targetDays} day${targetDays > 1 ? "s" : ""}.`,
+      duration: `${targetDays} day${targetDays > 1 ? "s" : ""}`,
+      estimatedCommitment: `${Math.round(totalMinutes / targetDays)} min/day`,
+      items: [],
+      totalTasks: items.length,
+    };
+
+    return { plan, tasks: tasksDrafts };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lifeContext.preferredStudyHours]);
+
   // ---------- YouTube playlist handler ----------
+
   const handleYouTubePlaylistCommand = useCallback(async (command: string) => {
     const urlMatch = command.match(/(https?:\/\/[^\s]+)/i);
     if (!urlMatch) return null;
@@ -332,6 +453,16 @@ function TasksPage() {
     setIsProcessing(true);
     addAssistantMessage({ role: "user", text: command });
     try {
+      // 0. Pasted numbered list (e.g. copied from YouTube / lecture notes)
+      const pastedPlan = handlePastedListCommand(command);
+      if (pastedPlan) {
+        setGeneratedPlan(pastedPlan.plan);
+        setPendingTasks(pastedPlan.tasks);
+        setShowPlanConfirmation(true);
+        addAssistantMessage({ role: "ai", text: `Parsed ${pastedPlan.tasks.length} items from your list into tasks. Review and confirm to add them!` });
+        return;
+      }
+
       // 1. YouTube playlist command
       const playlistPlan = await handleYouTubePlaylistCommand(command);
       if (playlistPlan) {
@@ -412,7 +543,7 @@ function TasksPage() {
     } finally {
       setIsProcessing(false);
     }
-  }, [addAssistantMessage, addGoal, addTask, batchAddTasks, deleteTask, handleYouTubePlaylistCommand, rescheduleOverdueTasks, taskCommandContext, updateTask]);
+  }, [addAssistantMessage, addGoal, addTask, batchAddTasks, deleteTask, handlePastedListCommand, handleYouTubePlaylistCommand, rescheduleOverdueTasks, taskCommandContext, updateTask]);
 
   const handleQuickAction = useCallback(async (action: string) => {
     await handleAiCommand(QUICK_ACTION_PROMPTS[action] || "Plan my day");
