@@ -83,6 +83,72 @@ type ParsedPlanResult = {
   plan: GeneratedPlan;
   tasks: TaskInput[];
 };
+type RescheduleGroupSummary = {
+  key: string;
+  taskCount: number;
+  totalMinutes: number;
+  scheduledDays: number;
+  firstDueDate: string;
+  lastDueDate: string;
+};
+
+type RescheduleResult = {
+  moved: number;
+  summary: string;
+  warning?: string;
+  groups: RescheduleGroupSummary[];
+};
+
+const DEFAULT_DAILY_CAPACITY_MINUTES = 120;
+const DEFAULT_RESCHEDULE_DAYS = 7;
+
+function normalizeTagValue(tag: string) {
+  return tag.replace(/^#/, "").trim().toLowerCase();
+}
+
+function titleCase(value: string) {
+  const cleaned = value
+    .replace(/^(course|playlist|group|module):/i, "")
+    .replace(/^#/, "")
+    .replace(/[-_]+/g, " ")
+    .trim();
+
+  if (!cleaned) return "Uncategorized";
+  return cleaned.replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function getOverdueGroupKey(task: Task) {
+  const explicitGroupTag = task.tags?.find((tag) => {
+    const normalized = normalizeTagValue(tag);
+    return (
+      normalized.startsWith("course:") ||
+      normalized.startsWith("playlist:") ||
+      normalized.startsWith("group:") ||
+      normalized.startsWith("module:")
+    );
+  });
+
+  if (explicitGroupTag) {
+    return normalizeTagValue(explicitGroupTag);
+  }
+
+  const firstUsefulTag = task.tags?.find(
+    (tag) => normalizeTagValue(tag) !== "ai-generated"
+  );
+
+  if (firstUsefulTag) return normalizeTagValue(firstUsefulTag);
+
+  return task.category?.trim() || "Uncategorized";
+}
+
+function formatMinutesHuman(minutes: number) {
+  const hrs = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  if (hrs && mins) return `${hrs}h ${mins}m`;
+  if (hrs) return `${hrs}h`;
+  return `${mins}m`;
+}
+
 
 function shiftDate(base: Date, days: number) {
   const d = new Date(base);
@@ -940,6 +1006,7 @@ function TasksPage() {
     suggestion: string;
   } | null>(null);
   const [isCoachLoading, setIsCoachLoading] = useState(false);
+  const [rescheduleSummary, setRescheduleSummary] = useState<string | null>(null);
 
   const coachSignatureRef = useRef<string | null>(null);
 
@@ -988,52 +1055,218 @@ function TasksPage() {
     [focusSessions, todayStr]
   );
 
-  const rescheduleOverdueTasks = useCallback(() => {
-    const overdueTasks = tasks
-      .filter((t) => isTaskOverdue(t, now))
+  const rescheduleDailyCapacity = useMemo(() => {
+    const start = toTimeMinutes(lifeContext.preferredStudyHours.start) ?? 540;
+    const end = toTimeMinutes(lifeContext.preferredStudyHours.end);
+
+    const windowMinutes =
+      end != null
+        ? end > start
+          ? end - start
+          : 24 * 60 - start + end
+        : DEFAULT_DAILY_CAPACITY_MINUTES;
+
+    return Math.max(
+      60,
+      Math.min(DEFAULT_DAILY_CAPACITY_MINUTES, windowMinutes || DEFAULT_DAILY_CAPACITY_MINUTES)
+    );
+  }, [lifeContext.preferredStudyHours]);
+
+  const overdueGroups = useMemo(() => {
+    const overdueTasks = tasks.filter((task) => isTaskOverdue(task, now));
+
+    const map = new Map<string, { tasks: Task[]; totalMinutes: number }>();
+
+    overdueTasks.forEach((task) => {
+      const key = getOverdueGroupKey(task);
+      const current = map.get(key) ?? { tasks: [], totalMinutes: 0 };
+      const minutes = clampMinutes(task.focusMinutes || 30, 15, 240);
+
+      current.tasks.push(task);
+      current.totalMinutes += minutes;
+      map.set(key, current);
+    });
+
+    return [...map.entries()]
+      .map(([key, value]) => ({
+        key,
+        tasks: value.tasks.sort(
+          (a, b) =>
+            (a.dueDate ?? "").localeCompare(b.dueDate ?? "") ||
+            a.createdAt.localeCompare(b.createdAt)
+        ),
+        totalMinutes: value.totalMinutes,
+      }))
       .sort(
+        (a, b) =>
+          (a.tasks[0]?.dueDate ?? "").localeCompare(b.tasks[0]?.dueDate ?? "") ||
+          a.tasks[0].createdAt.localeCompare(b.tasks[0].createdAt) ||
+          b.totalMinutes - a.totalMinutes
+      );
+  }, [tasks, now]);
+
+const rescheduleOverdueTasks = useCallback((): RescheduleResult => {
+  const overdueTasks = tasks
+    .filter((t) => isTaskOverdue(t, now))
+    .sort(
+      (a, b) =>
+        (a.dueDate ?? "").localeCompare(b.dueDate ?? "") ||
+        a.createdAt.localeCompare(b.createdAt)
+    );
+
+  if (overdueTasks.length === 0) {
+    const message = "No overdue tasks found.";
+    setRescheduleSummary(message);
+    window.setTimeout(() => setRescheduleSummary(null), 5000);
+    return { moved: 0, summary: message, groups: [] };
+  }
+
+  const startMinutes = toTimeMinutes(lifeContext.preferredStudyHours.start) ?? 540;
+  const totalMinutes = overdueTasks.reduce(
+    (sum, task) => sum + clampMinutes(task.focusMinutes || 30, 15, 240),
+    0
+  );
+
+  const plannedDays = Math.max(
+    DEFAULT_RESCHEDULE_DAYS,
+    Math.ceil(totalMinutes / rescheduleDailyCapacity)
+  );
+
+  const startDate = shiftDate(new Date(`${todayStr}T00:00:00`), 1);
+  const dayBuckets = Array.from({ length: plannedDays }, (_, index) => ({
+    date: shiftDate(startDate, index),
+    usedMinutes: 0,
+  }));
+
+  const grouped = new Map<string, Task[]>();
+  for (const task of overdueTasks) {
+    const key = getOverdueGroupKey(task);
+    const list = grouped.get(key) ?? [];
+    list.push(task);
+    grouped.set(key, list);
+  }
+
+  const groupEntries = [...grouped.entries()]
+    .map(([key, list]) => ({
+      key,
+      tasks: list.sort(
         (a, b) =>
           (a.dueDate ?? "").localeCompare(b.dueDate ?? "") ||
           a.createdAt.localeCompare(b.createdAt)
+      ),
+      totalMinutes: list.reduce(
+        (sum, task) => sum + clampMinutes(task.focusMinutes || 30, 15, 240),
+        0
+      ),
+    }))
+    .sort(
+      (a, b) =>
+        (a.tasks[0]?.dueDate ?? "").localeCompare(b.tasks[0]?.dueDate ?? "") ||
+        a.tasks[0].createdAt.localeCompare(b.tasks[0].createdAt) ||
+        b.totalMinutes - a.totalMinutes
+    );
+
+  const groupSummaries: RescheduleResult["groups"] = [];
+  let moved = 0;
+  let extendedDeadline = false;
+
+  for (const group of groupEntries) {
+    const groupTargetPerDay = Math.max(1, group.totalMinutes / dayBuckets.length);
+    let progressMinutes = 0;
+    const usedDays = new Set<number>();
+    let firstDueDate = "";
+    let lastDueDate = "";
+
+    for (const task of group.tasks) {
+      const effort = clampMinutes(task.focusMinutes || 30, 15, 240);
+      const idealDay = Math.min(
+        dayBuckets.length - 1,
+        Math.floor(progressMinutes / groupTargetPerDay)
       );
 
-    if (overdueTasks.length === 0) return 0;
+      let scheduledIndex = -1;
 
-    const preferredStart = toTimeMinutes(lifeContext.preferredStudyHours.start) ?? 540;
-    const preferredEnd = toTimeMinutes(lifeContext.preferredStudyHours.end);
-    const windowMinutes =
-      preferredEnd != null
-        ? preferredEnd > preferredStart
-          ? preferredEnd - preferredStart
-          : 24 * 60 - preferredStart + preferredEnd
-        : 180;
-
-    const dayCapacity = Math.max(90, windowMinutes);
-    const gapMinutes = 10;
-
-    let updated = 0;
-    let cursorDate = new Date(`${todayStr}T00:00:00`);
-    cursorDate = shiftDate(cursorDate, 1);
-    let usedToday = 0;
-
-    overdueTasks.forEach((task) => {
-      const effort = clampMinutes(task.focusMinutes || 30, 15, 240);
-
-      if (usedToday > 0 && usedToday + effort > dayCapacity) {
-        cursorDate = shiftDate(cursorDate, 1);
-        usedToday = 0;
+      for (let index = idealDay; index < dayBuckets.length; index++) {
+        if (dayBuckets[index].usedMinutes + effort <= rescheduleDailyCapacity) {
+          scheduledIndex = index;
+          break;
+        }
       }
 
-      const dueDate = formatLocalDate(cursorDate);
-      const dueTime = minutesToClock(preferredStart + usedToday);
+      while (scheduledIndex === -1) {
+        dayBuckets.push({
+          date: shiftDate(dayBuckets[dayBuckets.length - 1].date, 1),
+          usedMinutes: 0,
+        });
+        extendedDeadline = true;
+        scheduledIndex = dayBuckets.length - 1;
+        if (dayBuckets[scheduledIndex].usedMinutes + effort <= rescheduleDailyCapacity) {
+          break;
+        }
+      }
+
+      const bucket = dayBuckets[scheduledIndex];
+      const dueDate = formatLocalDate(bucket.date);
+      const dueTime = minutesToClock(startMinutes + bucket.usedMinutes);
 
       updateTask(task.id, { dueDate, dueTime });
-      usedToday += effort + gapMinutes;
-      updated++;
-    });
 
-    return updated;
-  }, [tasks, now, lifeContext.preferredStudyHours, todayStr, updateTask]);
+      bucket.usedMinutes += effort;
+      progressMinutes += effort;
+      usedDays.add(scheduledIndex);
+      if (!firstDueDate) firstDueDate = dueDate;
+      lastDueDate = dueDate;
+      moved++;
+    }
+
+    groupSummaries.push({
+      key: group.key,
+      taskCount: group.tasks.length,
+      totalMinutes: group.totalMinutes,
+      scheduledDays: usedDays.size,
+      firstDueDate,
+      lastDueDate,
+    });
+  }
+
+  const finalDeadline = formatLocalDate(dayBuckets[dayBuckets.length - 1].date);
+
+  const groupText = groupSummaries
+    .map(
+      (group) =>
+        `${titleCase(group.key)}: ${group.taskCount} task${group.taskCount === 1 ? "" : "s"}, ${formatMinutesHuman(group.totalMinutes)} total, spread across ${group.scheduledDays} day${group.scheduledDays === 1 ? "" : "s"}`
+    )
+    .join("\n");
+
+  const summary = [
+    `Rescheduled ${moved} task${moved === 1 ? "" : "s"} across ${dayBuckets.length} day${dayBuckets.length === 1 ? "" : "s"} (${formatMinutesHuman(rescheduleDailyCapacity)}/day). New deadline: ${finalDeadline}.`,
+    groupText,
+    extendedDeadline
+      ? "Workload exceeded the initial 7-day window, so the deadline was extended automatically."
+      : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  setRescheduleSummary(summary);
+  window.setTimeout(() => setRescheduleSummary(null), 7000);
+
+  return {
+    moved,
+    summary,
+    warning: extendedDeadline
+      ? "Deadline extended automatically because the workload did not fit in the first 7-day window."
+      : undefined,
+    groups: groupSummaries,
+  };
+}, [
+  lifeContext.preferredStudyHours.start,
+  now,
+  rescheduleDailyCapacity,
+  tasks,
+  todayStr,
+  updateTask,
+]);
 
   const coachContext = useMemo<AiContext>(
     () => ({
@@ -1251,11 +1484,8 @@ function TasksPage() {
         const parsed = parseCommand(command);
 
         if (parsed.intent === "reschedule") {
-          const updated = rescheduleOverdueTasks();
-          addAssistantMessage({
-            role: "ai",
-            text: updated ? `Rebalanced ${updated} overdue task${updated === 1 ? "" : "s"}.` : "No overdue tasks found.",
-          });
+          const result = rescheduleOverdueTasks();
+          addAssistantMessage({ role: "ai", text: result.summary });
           return;
         }
 
@@ -1651,26 +1881,88 @@ function TasksPage() {
           streakCount={stats.streak}
         />
 
-        {overdue.length > 0 && viewMode === "list" && (
-          <div className="space-y-2">
-            <div className="flex items-center gap-2 text-sm font-bold text-neon-pink">
-              <AlertCircle className="h-4 w-4" /> Overdue ({overdue.length})
-            </div>
-            <div className="space-y-2">
-              {overdue.map((task) => (
-                <TaskCard
-                  key={task.id}
-                  task={task}
-                  onToggle={() => toggleTask(task.id)}
-                  onDelete={() => deleteTask(task.id)}
-                  onEdit={() => setEditingTaskId(task.id)}
-                />
-              ))}
-            </div>
+        {(overdueGroups.length > 0 || rescheduleSummary) && (
+          <div className="space-y-3">
+            <AnimatePresence>
+              {rescheduleSummary && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="rounded-2xl border border-neon-cyan/20 bg-white/5 p-4 text-sm text-white whitespace-pre-line"
+                >
+                  {rescheduleSummary}
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {overdueGroups.length > 0 && (
+              <div className="glass rounded-2xl p-4 border border-neon-pink/20">
+                <div className="flex items-center justify-between mb-3 gap-3">
+                  <div>
+                    <h3 className="font-semibold text-sm text-neon-pink">
+                      Overdue ({overdue.length})
+                    </h3>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Grouped by course tag or category. Each group keeps original order and respects your daily capacity.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const result = rescheduleOverdueTasks();
+                      addAssistantMessage({ role: "ai", text: result.summary });
+                    }}
+                    className="inline-flex items-center gap-2 rounded-lg border border-neon-pink/30 bg-neon-pink/10 px-3 py-1.5 text-xs font-medium text-neon-pink"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    Smart reschedule
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  {overdueGroups.map((group) => (
+                    <div
+                      key={group.key}
+                      className="rounded-xl border border-white/10 bg-white/5 p-3"
+                    >
+                      <div className="flex items-start justify-between gap-3 mb-2">
+                        <div>
+                          <div className="font-semibold text-sm text-white">
+                            {titleCase(group.key)}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {group.tasks.length} task{group.tasks.length === 1 ? "" : "s"} · {formatMinutesHuman(group.totalMinutes)} total
+                          </div>
+                        </div>
+                        <div className="text-[11px] text-neon-cyan">
+                          {Math.ceil(group.totalMinutes / rescheduleDailyCapacity)} day plan
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        {group.tasks.map((task) => (
+                          <TaskCard
+                            key={task.id}
+                            task={task}
+                            onToggle={() => toggleTask(task.id)}
+                            onDelete={() => deleteTask(task.id)}
+                            onEdit={() => setEditingTaskId(task.id)}
+                            compact
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
         <div className="flex flex-wrap items-center gap-3">
+
           <div className="glass rounded-xl px-3 py-2 flex items-center gap-2 flex-1 min-w-[200px]">
             <Search className="h-4 w-4 text-muted-foreground" />
             <input
@@ -1769,36 +2061,87 @@ function TasksPage() {
           </div>
         ) : (
           <div className="space-y-4">
-            {overdue.length > 0 && (
-              <div className="glass rounded-2xl p-4 border border-neon-pink/20">
-                <div className="flex items-center justify-between mb-3 gap-3">
-                  <h3 className="font-semibold text-sm text-neon-pink">
-                    Overdue ({overdue.length})
-                  </h3>
-                  <button
-                    type="button"
-                    onClick={() => handleAiCommand("Reschedule all overdue tasks")}
-                    className="inline-flex items-center gap-2 rounded-lg border border-neon-pink/30 bg-neon-pink/10 px-3 py-1.5 text-xs font-medium text-neon-pink"
+            {(overdueGroups.length > 0 || rescheduleSummary) && (
+            <div className="space-y-3">
+              <AnimatePresence>
+                {rescheduleSummary && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    className="rounded-2xl border border-neon-cyan/20 bg-white/5 p-4 text-sm text-white whitespace-pre-line"
                   >
-                    <RefreshCw className="h-3.5 w-3.5" /> Rebalance
-                  </button>
-                </div>
-                <div className="space-y-2">
-                  {overdue.map((task) => (
-                    <TaskCard
-                      key={task.id}
-                      task={task}
-                      onToggle={() => toggleTask(task.id)}
-                      onDelete={() => deleteTask(task.id)}
-                      onEdit={() => setEditingTaskId(task.id)}
-                      compact
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
+                    {rescheduleSummary}
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
-            <div className="flex flex-wrap gap-4">
+              {overdueGroups.length > 0 && (
+                <div className="glass rounded-2xl p-4 border border-neon-pink/20">
+                  <div className="flex items-center justify-between mb-3 gap-3">
+                    <div>
+                      <h3 className="font-semibold text-sm text-neon-pink">
+                        Overdue ({overdue.length})
+                      </h3>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Grouped by course tag or category. Each group keeps original order and respects your daily capacity.
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const result = rescheduleOverdueTasks();
+                        addAssistantMessage({ role: "ai", text: result.summary });
+                      }}
+                      className="inline-flex items-center gap-2 rounded-lg border border-neon-pink/30 bg-neon-pink/10 px-3 py-1.5 text-xs font-medium text-neon-pink"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      Smart reschedule
+                    </button>
+                  </div>
+
+                  <div className="space-y-3">
+                    {overdueGroups.map((group) => (
+                      <div
+                        key={group.key}
+                        className="rounded-xl border border-white/10 bg-white/5 p-3"
+                      >
+                        <div className="flex items-start justify-between gap-3 mb-2">
+                          <div>
+                            <div className="font-semibold text-sm text-white">
+                              {titleCase(group.key)}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              {group.tasks.length} task{group.tasks.length === 1 ? "" : "s"} · {formatMinutesHuman(group.totalMinutes)} total
+                            </div>
+                          </div>
+                          <div className="text-[11px] text-neon-cyan">
+                            {Math.ceil(group.totalMinutes / rescheduleDailyCapacity)} day plan
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          {group.tasks.map((task) => (
+                            <TaskCard
+                              key={task.id}
+                              task={task}
+                              onToggle={() => toggleTask(task.id)}
+                              onDelete={() => deleteTask(task.id)}
+                              onEdit={() => setEditingTaskId(task.id)}
+                              compact
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          <div className="flex flex-wrap gap-4">
+
               {Object.entries(boardCols).map(([col, colTasks]) => (
                 <div
                   key={col}
