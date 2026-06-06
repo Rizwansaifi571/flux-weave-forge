@@ -15,38 +15,80 @@ import { generateTaskPlan, buildTaskDrafts } from "@/lib/ai/task-planner";
 import { planDay } from "@/lib/ai/task-scheduler";
 import { prioritizeTasks } from "@/lib/ai/task-prioritizer";
 import { analyzeProductivity } from "@/lib/ai/task-analyzer";
-import { addLocalDays, formatLocalDate, startOfLocalDay } from "@/lib/date";
+import { formatLocalDate, startOfLocalDay } from "@/lib/date";
 import { buildLocalRoadmapFallback } from "@/lib/ai/task-command-local";
 import { extractRoadmapSource } from "@/lib/api/roadmap-source.functions";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  Plus, Search, Trash2, CheckCircle2, Circle, Calendar, Flame, Clock, Sparkles,
-  AlertCircle, List, Columns, Zap, PencilLine, RefreshCw,
+  Plus,
+  Search,
+  Trash2,
+  CheckCircle2,
+  Circle,
+  Calendar,
+  Flame,
+  Clock,
+  Sparkles,
+  AlertCircle,
+  List,
+  Columns,
+  Zap,
+  PencilLine,
+  RefreshCw,
 } from "lucide-react";
 import { useMemo, useState, useCallback, useEffect, useRef } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 
 export const Route = createFileRoute("/tasks")({ component: TasksPage });
 
-const todayStr = formatLocalDate();
 const priorityConfig = {
-  high: { color: "bg-neon-pink", label: "High", icon: AlertCircle },
-  medium: { color: "bg-neon-purple", label: "Medium", icon: Circle },
-  low: { color: "bg-neon-blue", label: "Low", icon: Circle },
+  high: { color: "bg-neon-pink", label: "High" },
+  medium: { color: "bg-neon-purple", label: "Medium" },
+  low: { color: "bg-neon-blue", label: "Low" },
 } as const;
 
 type ViewMode = "list" | "board";
 type FilterType = "all" | "today" | "pending" | "done" | "high";
 type GroupBy = "category" | "dueDate" | "priority";
-type EnergyLevel = "low" | "medium" | "high";
-type TaskInput = Omit<Task, "id" | "createdAt" | "completed">;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const AI_TAG = "ai-generated";
+
+type TaskInput = Omit<Task, "id" | "createdAt" | "completed">;
 
 type TaskFormState = {
-  title: string; description: string; priority: Priority;
-  dueDate: string; dueTime: string; focusMinutes: number;
-  category: string; tagsInput: string; completed: boolean;
+  title: string;
+  description: string;
+  priority: Priority;
+  dueDate: string;
+  dueTime: string;
+  focusMinutes: number;
+  category: string;
+  tagsInput: string;
+  completed: boolean;
 };
+
+type PlannedItem = {
+  title: string;
+  durationMinutes: number;
+  note?: string;
+};
+
+type ParsedPlanResult = {
+  plan: GeneratedPlan;
+  tasks: TaskInput[];
+};
+
+function shiftDate(base: Date, days: number) {
+  const d = new Date(base);
+  d.setDate(d.getDate() + days);
+  return d;
+}
 
 function toTimeMinutes(value?: string) {
   if (!value) return null;
@@ -54,142 +96,805 @@ function toTimeMinutes(value?: string) {
   if (!match) return null;
   return Number(match[1]) * 60 + Number(match[2]);
 }
+
 function minutesToClock(totalMinutes: number) {
   const normalized = ((totalMinutes % (24 * 60)) + 24 * 60) % (24 * 60);
-  return `${String(Math.floor(normalized / 60)).padStart(2, "0")}:${String(normalized % 60).padStart(2, "0")}`;
+  return `${String(Math.floor(normalized / 60)).padStart(2, "0")}:${String(
+    normalized % 60
+  ).padStart(2, "0")}`;
 }
-function formatTimeInput(value?: string) { return value?.slice(0,5) ?? ""; }
-function parseTagsInput(input: string) { return input.split(",").map(t=>t.trim()).filter(Boolean); }
+
+function formatTimeInput(value?: string) {
+  return value?.slice(0, 5) ?? "";
+}
+
+function parseTagsInput(input: string) {
+  return input
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+
+function clampMinutes(value: number, min = 15, max = 240) {
+  return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+function extractTargetDays(command: string, fallback: number) {
+  const lower = command.toLowerCase();
+
+  const daysMatch = lower.match(/(\d+)\s*(days?|day)\b/);
+  if (daysMatch) return Math.max(1, Number(daysMatch[1]));
+
+  const weeksMatch = lower.match(/(\d+)\s*(weeks?|week)\b/);
+  if (weeksMatch) return Math.max(1, Number(weeksMatch[1]) * 7);
+
+  const monthsMatch = lower.match(/(\d+)\s*(months?|month)\b/);
+  if (monthsMatch) return Math.max(1, Number(monthsMatch[1]) * 30);
+
+  const byIsoDateMatch = lower.match(/\bby\s+(\d{4}-\d{2}-\d{2})\b/);
+  if (byIsoDateMatch) {
+    const target = new Date(`${byIsoDateMatch[1]}T00:00:00`);
+    if (!Number.isNaN(target.getTime())) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const diff = Math.ceil((target.getTime() - today.getTime()) / DAY_MS);
+      return Math.max(1, diff + 1);
+    }
+  }
+
+  return Math.max(1, fallback);
+}
+
+function estimateItemMinutes(text: string) {
+  const match = text.match(
+    /(\d+(?:\.\d+)?)\s*(hours?|hrs?|hr|minutes?|mins?|min|m)\b/i
+  );
+  if (!match) return 45;
+
+  const value = Number(match[1]);
+  const unit = match[2].toLowerCase();
+  if (unit.startsWith("hour") || unit.startsWith("hr")) {
+    return clampMinutes(value * 60, 15, 240);
+  }
+  return clampMinutes(value, 5, 240);
+}
+
+function cleanLineItem(line: string) {
+  return line
+    .replace(/^(?:[-*•]\s+|\d+[.)]\s+|[>]\s+)/, "")
+    .trim();
+}
+
 function buildTaskForm(task?: Task | null): TaskFormState {
   return {
-    title: task?.title ?? "", description: task?.description ?? "", priority: task?.priority ?? "medium",
-    dueDate: task?.dueDate ?? "", dueTime: formatTimeInput(task?.dueTime), focusMinutes: task?.focusMinutes ?? 30,
-    category: task?.category ?? "General", tagsInput: task?.tags?.join(", ") ?? "", completed: task?.completed ?? false,
+    title: task?.title ?? "",
+    description: task?.description ?? "",
+    priority: task?.priority ?? "medium",
+    dueDate: task?.dueDate ?? "",
+    dueTime: formatTimeInput(task?.dueTime),
+    focusMinutes: task?.focusMinutes ?? 30,
+    category: task?.category ?? "General",
+    tagsInput: task?.tags?.join(", ") ?? "",
+    completed: task?.completed ?? false,
   };
 }
+
 function isTaskOverdue(task: Task, now = new Date()) {
   if (task.completed || !task.dueDate) return false;
+
   const dueDate = new Date(`${task.dueDate}T00:00:00`);
-  const todayStart = new Date(now); todayStart.setHours(0,0,0,0);
+  const todayStart = new Date(now);
+  todayStart.setHours(0, 0, 0, 0);
+
   if (dueDate < todayStart) return true;
   if (dueDate > todayStart) return false;
+
   const dueMinutes = toTimeMinutes(task.dueTime);
-  return dueMinutes != null && (now.getHours()*60 + now.getMinutes()) > dueMinutes;
+  return dueMinutes != null && now.getHours() * 60 + now.getMinutes() > dueMinutes;
 }
+
 function formatDueLabel(task: Task) {
   if (!task.dueDate) return "No due date";
   return task.dueTime ? `${task.dueDate} at ${task.dueTime}` : task.dueDate;
 }
+
 function formatDueStatus(task: Task, now = new Date()) {
   if (task.completed) return "Completed";
   if (isTaskOverdue(task, now)) return "Overdue";
   return task.dueDate ? "On track" : "Flexible";
 }
-function calculateCompletionStreak(tasks: Task[]) {
-  const completedDates = new Set(tasks.filter(t=>t.completedAt).map(t=>formatLocalDate(new Date(t.completedAt as string))));
+
+function calculateCompletionStreak(tasks: Task[], referenceDate: string) {
+  const completedDates = new Set(
+    tasks
+      .filter((t) => t.completedAt)
+      .map((t) => formatLocalDate(new Date(t.completedAt as string)))
+  );
+
   const cursor = startOfLocalDay();
   let streak = 0;
-  while (completedDates.has(formatLocalDate(cursor))) { streak++; cursor.setDate(cursor.getDate()-1); }
+
+  // Start from the current day in the app, not only from the current machine time.
+  while (completedDates.has(formatLocalDate(cursor))) {
+    streak++;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+
+  // If today is not completed but yesterday was, the streak logic above still works.
+  // referenceDate is kept for future flexibility and to keep the function deterministic.
+  void referenceDate;
+
   return streak;
 }
 
-// ---------- Helper Components (unchanged from your version) ----------
-function ProgressRing({ progress, size=80, strokeWidth=6 }) {
-  const radius = (size-strokeWidth)/2;
-  const circumference = 2*Math.PI*radius;
-  const offset = circumference - (progress/100)*circumference;
+function parsePastedList(command: string): PlannedItem[] {
+  const lines = command
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length === 0) return [];
+
+  const bulletLike = lines.filter((line) =>
+    /^(?:[-*•]|\d+[.)])\s+/.test(line)
+  );
+
+  const candidateLines = bulletLike.length > 0 ? bulletLike : lines;
+
+  const items = candidateLines
+    .map((line) => cleanLineItem(line))
+    .filter((line) => line.length > 2 && !/^https?:\/\//i.test(line))
+    .map((line) => ({
+      title: line,
+      durationMinutes: estimateItemMinutes(line),
+    }));
+
+  return items;
+}
+
+function bucketItemsByMinutes(items: PlannedItem[], targetDays: number) {
+  if (items.length === 0) return [];
+
+  const totalMinutes = items.reduce((sum, item) => sum + item.durationMinutes, 0);
+  const dailyBudget = Math.max(30, Math.ceil(totalMinutes / Math.max(1, targetDays)));
+
+  const buckets: PlannedItem[][] = [];
+  let current: PlannedItem[] = [];
+  let usedMinutes = 0;
+
+  items.forEach((item, index) => {
+    const minutes = clampMinutes(item.durationMinutes, 5, 240);
+    const wouldOverflow =
+      current.length > 0 && usedMinutes + minutes > dailyBudget && buckets.length < targetDays - 1;
+
+    if (wouldOverflow) {
+      buckets.push(current);
+      current = [];
+      usedMinutes = 0;
+    }
+
+    current.push({ ...item, durationMinutes: minutes });
+    usedMinutes += minutes;
+
+    if (index === items.length - 1 && current.length > 0) {
+      buckets.push(current);
+    }
+  });
+
+  return buckets.length > 0 ? buckets : [items];
+}
+
+function buildPlanFromItems(params: {
+  title: string;
+  description: string;
+  targetDays: number;
+  items: PlannedItem[];
+  startDate: string;
+  category?: string;
+  tag?: string;
+  preferredStudyHours?: { start: string; end: string };
+}): ParsedPlanResult | null {
+  const {
+    title,
+    description,
+    targetDays,
+    items,
+    startDate,
+    category = "Study",
+    tag = AI_TAG,
+    preferredStudyHours,
+  } = params;
+
+  if (items.length === 0) return null;
+
+  const buckets = bucketItemsByMinutes(items, targetDays);
+
+  const plan: GeneratedPlan = {
+    title,
+    description,
+    duration: `${Math.max(1, buckets.length)} day${buckets.length > 1 ? "s" : ""}`,
+    estimatedCommitment: `${Math.round(
+      items.reduce((sum, item) => sum + item.durationMinutes, 0) /
+        Math.max(1, buckets.length)
+    )} min/day`,
+    totalTasks: items.length,
+    items: buckets.map((bucket, dayIndex) => ({
+      phase: `Day ${dayIndex + 1}`,
+      description:
+        bucket.length === 1
+          ? `${bucket[0].title}`
+          : `${bucket.length} items · ${bucket[0].title}${
+              bucket.length > 1 ? ` +${bucket.length - 1} more` : ""
+            }`,
+      taskCount: bucket.length,
+      taskTitles: bucket.map((item) => item.title),
+      taskDurationsMinutes: bucket.map((item) => item.durationMinutes),
+    })),
+  };
+
+  const startDateObj = new Date(`${startDate}T00:00:00`);
+  const startMinutes = toTimeMinutes(preferredStudyHours?.start) ?? 540;
+  const gapMinutes = 10;
+
+  const tasks: TaskInput[] = buckets.flatMap((bucket, dayIndex) => {
+    const dueDate = formatLocalDate(shiftDate(startDateObj, dayIndex));
+    let cursorMinutes = startMinutes;
+
+    return bucket.map((item) => {
+      const focusMinutes = clampMinutes(item.durationMinutes, 5, 240);
+      const dueTime = minutesToClock(cursorMinutes);
+
+      const draft: TaskInput = {
+        title: item.title,
+        description: item.note,
+        priority: "medium",
+        dueDate,
+        dueTime,
+        tags: [tag],
+        focusMinutes,
+        category,
+      };
+
+      cursorMinutes += focusMinutes + gapMinutes;
+      return draft;
+    });
+  });
+
+  return { plan, tasks };
+}
+
+function buildRoadmapFromText(command: string, startDate: string) {
+  const items = parsePastedList(command);
+  if (items.length === 0) return null;
+
+  const targetDays = extractTargetDays(
+    command,
+    Math.max(1, Math.ceil(items.length / 5))
+  );
+
+  const title =
+    items.length === 1
+      ? items[0].title
+      : "Task Roadmap";
+
+  const description = `${items.length} item${
+    items.length > 1 ? "s" : ""
+  } scheduled over ${targetDays} day${targetDays > 1 ? "s" : ""}.`;
+
+  return buildPlanFromItems({
+    title,
+    description,
+    targetDays,
+    items,
+    startDate,
+    category: "Study",
+    tag: AI_TAG,
+  });
+}
+
+function buildRoadmapFromPlaylist(
+  source: { title?: string; items: { title: string; durationMinutes: number | null }[] },
+  command: string,
+  startDate: string,
+  preferredStudyHours?: { start: string; end: string }
+) {
+  const items: PlannedItem[] = source.items
+    .filter((item) => item.title.trim().length > 0)
+    .map((item) => ({
+      title: item.title.trim(),
+      durationMinutes: clampMinutes(item.durationMinutes ?? 45, 5, 240),
+    }));
+
+  if (items.length === 0) return null;
+
+  const targetDays = extractTargetDays(command, 30);
+
+  const title = source.title?.trim() || "YouTube Playlist Roadmap";
+  const description = `${items.length} video${items.length > 1 ? "s" : ""} scheduled over ${targetDays} day${targetDays > 1 ? "s" : ""}.`;
+
+  return buildPlanFromItems({
+    title,
+    description,
+    targetDays,
+    items,
+    startDate,
+    category: "Study",
+    tag: "playlist",
+    preferredStudyHours,
+  });
+}
+
+// ---------- Helper Components ----------
+function ProgressRing({
+  progress,
+  size = 80,
+  strokeWidth = 6,
+}: {
+  progress: number;
+  size?: number;
+  strokeWidth?: number;
+}) {
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (progress / 100) * circumference;
+
   return (
     <svg width={size} height={size} className="transform -rotate-90">
-      <circle cx={size/2} cy={size/2} r={radius} fill="transparent" stroke="rgba(255,255,255,0.1)" strokeWidth={strokeWidth} />
-      <motion.circle cx={size/2} cy={size/2} r={radius} fill="transparent" stroke="url(#gradient)" strokeWidth={strokeWidth} strokeLinecap="round" strokeDasharray={circumference} initial={{strokeDashoffset:circumference}} animate={{strokeDashoffset:offset}} />
-      <defs><linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stopColor="#a855f7" /><stop offset="100%" stopColor="#22d3ee" /></linearGradient></defs>
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={radius}
+        fill="transparent"
+        stroke="rgba(255,255,255,0.1)"
+        strokeWidth={strokeWidth}
+      />
+      <motion.circle
+        cx={size / 2}
+        cy={size / 2}
+        r={radius}
+        fill="transparent"
+        stroke="url(#gradient)"
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeDasharray={circumference}
+        initial={{ strokeDashoffset: circumference }}
+        animate={{ strokeDashoffset: offset }}
+      />
+      <defs>
+        <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stopColor="#a855f7" />
+          <stop offset="100%" stopColor="#22d3ee" />
+        </linearGradient>
+      </defs>
     </svg>
   );
 }
-function WeeklyChart({ completedByDay }) {
-  const max = Math.max(...completedByDay,1);
-  const days = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
-  return <div className="flex items-end gap-1 h-16">{completedByDay.map((val,i)=>(
-    <div key={i} className="flex-1 flex flex-col items-center">
-      <motion.div className="w-full rounded-t bg-gradient-to-t from-neon-purple to-neon-cyan" initial={{height:0}} animate={{height:`${(val/max)*100}%`}} style={{minHeight:val>0?"4px":"0"}} />
-      <span className="text-[9px] mt-1 text-muted-foreground">{days[i]}</span>
+
+function WeeklyChart({ completedByDay }: { completedByDay: number[] }) {
+  const max = Math.max(...completedByDay, 1);
+  const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+  return (
+    <div className="flex items-end gap-1 h-16">
+      {completedByDay.map((val, i) => (
+        <div key={i} className="flex-1 flex flex-col items-center">
+          <motion.div
+            className="w-full rounded-t bg-gradient-to-t from-neon-purple to-neon-cyan"
+            initial={{ height: 0 }}
+            animate={{ height: `${(val / max) * 100}%` }}
+            style={{ minHeight: val > 0 ? "4px" : "0" }}
+          />
+          <span className="text-[9px] mt-1 text-muted-foreground">{days[i]}</span>
+        </div>
+      ))}
     </div>
-  ))}</div>;
+  );
 }
-function QuickAddForm({ onClose }) {
+
+function QuickAddForm({ onClose }: { onClose: () => void }) {
   const { addTask } = useStore();
+
   const [title, setTitle] = useState("");
   const [priority, setPriority] = useState<Priority>("medium");
-  const [energy, setEnergy] = useState<EnergyLevel>("medium");
   const [dueDate, setDueDate] = useState("");
   const [dueTime, setDueTime] = useState("");
   const [focusMinutes, setFocusMinutes] = useState(30);
   const [category, setCategory] = useState("General");
   const [tagsInput, setTagsInput] = useState("");
-  const handleSubmit = (e) => {
+  const [description, setDescription] = useState("");
+
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if(!title.trim()) return;
-    addTask({ title: title.trim(), priority, energy, focusMinutes: Math.min(480,Math.max(5,focusMinutes||30)), category: category.trim()||"General", tags: parseTagsInput(tagsInput), dueDate: dueDate||undefined, dueTime: dueTime||undefined });
-    setTitle(""); setPriority("medium"); setEnergy("medium"); setDueDate(""); setDueTime(""); setFocusMinutes(30); onClose();
+    if (!title.trim()) return;
+
+    addTask({
+      title: title.trim(),
+      description: description.trim() || undefined,
+      priority,
+      focusMinutes: clampMinutes(Number(focusMinutes) || 30, 5, 480),
+      category: category.trim() || "General",
+      tags: parseTagsInput(tagsInput),
+      dueDate: dueDate || undefined,
+      dueTime: dueTime || undefined,
+    });
+
+    setTitle("");
+    setPriority("medium");
+    setDueDate("");
+    setDueTime("");
+    setFocusMinutes(30);
+    setCategory("General");
+    setTagsInput("");
+    setDescription("");
+    onClose();
   };
+
   return (
-    <motion.form initial={{opacity:0,height:0}} animate={{opacity:1,height:"auto"}} exit={{opacity:0,height:0}} onSubmit={handleSubmit} className="space-y-3 overflow-hidden">
-      <div className="flex gap-2 items-center"><div className="h-10 w-10 grid place-items-center rounded-xl bg-gradient-primary glow-soft"><Plus className="h-4 w-4 text-white"/></div><input value={title} onChange={e=>setTitle(e.target.value)} placeholder="What's your mission?" className="flex-1 bg-transparent outline-none text-sm placeholder:text-muted-foreground font-medium" autoFocus /><button type="submit" className="rounded-xl bg-gradient-primary px-4 py-2 text-xs font-medium text-white glow-soft hover:opacity-90 transition">Add</button></div>
+    <motion.form
+      initial={{ opacity: 0, height: 0 }}
+      animate={{ opacity: 1, height: "auto" }}
+      exit={{ opacity: 0, height: 0 }}
+      onSubmit={handleSubmit}
+      className="space-y-3 overflow-hidden"
+    >
+      <div className="flex gap-2 items-center">
+        <div className="h-10 w-10 grid place-items-center rounded-xl bg-gradient-primary glow-soft">
+          <Plus className="h-4 w-4 text-white" />
+        </div>
+        <input
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="What's your mission?"
+          className="flex-1 bg-transparent outline-none text-sm placeholder:text-muted-foreground font-medium"
+          autoFocus
+        />
+        <button
+          type="submit"
+          className="rounded-xl bg-gradient-primary px-4 py-2 text-xs font-medium text-white glow-soft hover:opacity-90 transition"
+        >
+          Add
+        </button>
+      </div>
+
+      <textarea
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+        placeholder="Optional description"
+        className="glass w-full min-h-[72px] rounded-lg px-3 py-2 text-xs outline-none resize-none"
+      />
+
       <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-        <select value={priority} onChange={e=>setPriority(e.target.value as Priority)} className="glass rounded-lg px-2 py-1.5 text-xs outline-none"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select>
-        <select value={energy} onChange={e=>setEnergy(e.target.value as EnergyLevel)} className="glass rounded-lg px-2 py-1.5 text-xs outline-none"><option value="low">Low Energy</option><option value="medium">Medium Energy</option><option value="high">High Energy</option></select>
-        <input type="date" value={dueDate} onChange={e=>setDueDate(e.target.value)} className="glass rounded-lg px-2 py-1.5 text-xs outline-none" />
-        <input type="time" value={dueTime} onChange={e=>setDueTime(e.target.value)} className="glass rounded-lg px-2 py-1.5 text-xs outline-none" />
-        <input value={category} onChange={e=>setCategory(e.target.value)} placeholder="Category" className="glass rounded-lg px-2 py-1.5 text-xs outline-none" />
-        <input value={tagsInput} onChange={e=>setTagsInput(e.target.value)} placeholder="Tags (csv)" className="glass rounded-lg px-2 py-1.5 text-xs outline-none" />
-        <div className="flex items-center gap-1"><Clock className="h-3 w-3 text-muted-foreground"/><input type="number" min={5} max={480} value={focusMinutes} onChange={e=>setFocusMinutes(Number(e.target.value))} className="glass w-16 rounded-lg px-2 py-1.5 text-xs outline-none"/><span className="text-[10px] text-muted-foreground">min</span></div>
+        <select
+          value={priority}
+          onChange={(e) => setPriority(e.target.value as Priority)}
+          className="glass rounded-lg px-2 py-1.5 text-xs outline-none"
+        >
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+        </select>
+
+        <input
+          type="date"
+          value={dueDate}
+          onChange={(e) => setDueDate(e.target.value)}
+          className="glass rounded-lg px-2 py-1.5 text-xs outline-none"
+        />
+
+        <input
+          type="time"
+          value={dueTime}
+          onChange={(e) => setDueTime(e.target.value)}
+          className="glass rounded-lg px-2 py-1.5 text-xs outline-none"
+        />
+
+        <input
+          value={category}
+          onChange={(e) => setCategory(e.target.value)}
+          placeholder="Category"
+          className="glass rounded-lg px-2 py-1.5 text-xs outline-none"
+        />
+
+        <input
+          value={tagsInput}
+          onChange={(e) => setTagsInput(e.target.value)}
+          placeholder="Tags (csv)"
+          className="glass rounded-lg px-2 py-1.5 text-xs outline-none"
+        />
+
+        <div className="flex items-center gap-1">
+          <Clock className="h-3 w-3 text-muted-foreground" />
+          <input
+            type="number"
+            min={5}
+            max={480}
+            value={focusMinutes}
+            onChange={(e) => setFocusMinutes(Number(e.target.value))}
+            className="glass w-16 rounded-lg px-2 py-1.5 text-xs outline-none"
+          />
+          <span className="text-[10px] text-muted-foreground">min</span>
+        </div>
       </div>
     </motion.form>
   );
 }
-function TaskCard({ task, onToggle, onDelete, onEdit, compact=false }) {
+
+function TaskCard({
+  task,
+  onToggle,
+  onDelete,
+  onEdit,
+  compact = false,
+}: {
+  task: Task;
+  onToggle: () => void;
+  onDelete: () => void;
+  onEdit: () => void;
+  compact?: boolean;
+}) {
   return (
-    <motion.div layout initial={{opacity:0,y:10}} animate={{opacity:1,y:0}} exit={{opacity:0,scale:0.95}} whileHover={{scale:1.01}} className={`group glass rounded-xl p-3 flex items-center gap-3 cursor-pointer transition ${task.completed?"opacity-70":""}`} onClick={(e)=>{if((e.target as HTMLElement).closest("button, input")) return; onEdit();}}>
-      <button onClick={onToggle} className="shrink-0">{task.completed?<CheckCircle2 className="h-5 w-5 text-neon-cyan"/>:<Circle className="h-5 w-5 text-muted-foreground hover:text-neon-purple transition"/>}</button>
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.95 }}
+      whileHover={{ scale: 1.01 }}
+      className={`group glass rounded-xl p-3 flex items-center gap-3 cursor-pointer transition ${
+        task.completed ? "opacity-70" : ""
+      }`}
+      onClick={(e) => {
+        if ((e.target as HTMLElement).closest("button, input")) return;
+        onEdit();
+      }}
+    >
+      <button onClick={onToggle} className="shrink-0">
+        {task.completed ? (
+          <CheckCircle2 className="h-5 w-5 text-neon-cyan" />
+        ) : (
+          <Circle className="h-5 w-5 text-muted-foreground hover:text-neon-purple transition" />
+        )}
+      </button>
+
       <div className={`h-8 w-1 rounded-full ${priorityConfig[task.priority].color}`} />
+
       <div className="flex-1 min-w-0">
-        <div className={`font-medium text-sm ${task.completed?"line-through text-muted-foreground":""}`}>{task.title}</div>
-        {!compact && <div className="flex flex-wrap items-center gap-2 mt-1 text-xs text-muted-foreground">
-          <span className="flex items-center gap-1"><Sparkles className="h-3 w-3"/>{formatDueStatus(task)}</span>
-          {task.energy && <span className="flex items-center gap-1"><Zap className="h-3 w-3"/>{task.energy}</span>}
-          {task.dueDate && <span className={`flex items-center gap-1 ${isTaskOverdue(task)?"text-neon-pink":""}`}><Calendar className="h-3 w-3"/>{formatDueLabel(task)}</span>}
-          <span className="flex items-center gap-1"><Clock className="h-3 w-3"/>{task.focusMinutes}m</span>
-          {task.description && <span className="glass px-1.5 py-0.5 rounded-full text-[10px] max-w-[220px] truncate">{task.description}</span>}
-          {task.tags?.slice(0,2).map(t=><span key={t} className="glass px-1.5 py-0.5 rounded-full text-[10px]">#{t}</span>)}
-        </div>}
+        <div
+          className={`font-medium text-sm ${
+            task.completed ? "line-through text-muted-foreground" : ""
+          }`}
+        >
+          {task.title}
+        </div>
+
+        {!compact && (
+          <div className="flex flex-wrap items-center gap-2 mt-1 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1">
+              <Sparkles className="h-3 w-3" />
+              {formatDueStatus(task)}
+            </span>
+            {task.dueDate && (
+              <span
+                className={`flex items-center gap-1 ${
+                  isTaskOverdue(task) ? "text-neon-pink" : ""
+                }`}
+              >
+                <Calendar className="h-3 w-3" />
+                {formatDueLabel(task)}
+              </span>
+            )}
+            <span className="flex items-center gap-1">
+              <Clock className="h-3 w-3" />
+              {task.focusMinutes}m
+            </span>
+            {task.description && (
+              <span className="glass px-1.5 py-0.5 rounded-full text-[10px] max-w-[220px] truncate">
+                {task.description}
+              </span>
+            )}
+            {task.tags?.slice(0, 2).map((t) => (
+              <span key={t} className="glass px-1.5 py-0.5 rounded-full text-[10px]">
+                #{t}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
+
       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
-        <button onClick={onEdit} className="p-1 text-muted-foreground hover:text-neon-cyan"><PencilLine className="h-3.5 w-3.5"/></button>
-        <button onClick={onDelete} className="p-1 text-muted-foreground hover:text-neon-pink"><Trash2 className="h-3.5 w-3.5"/></button>
+        <button onClick={onEdit} className="p-1 text-muted-foreground hover:text-neon-cyan">
+          <PencilLine className="h-3.5 w-3.5" />
+        </button>
+        <button onClick={onDelete} className="p-1 text-muted-foreground hover:text-neon-pink">
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
       </div>
     </motion.div>
   );
 }
-function TaskEditorDialog({ task, open, onOpenChange, onSave, onDelete }) {
-  const [form, setForm] = useState<TaskFormState>(()=>buildTaskForm(task));
-  useEffect(()=>{setForm(buildTaskForm(task));},[task]);
-  if(!task) return null;
-  const updateField = (key,value)=>setForm(prev=>({...prev,[key]:value}));
+
+function TaskEditorDialog({
+  task,
+  open,
+  onOpenChange,
+  onSave,
+  onDelete,
+}: {
+  task: Task | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSave: (patch: Partial<Task>) => void;
+  onDelete: () => void;
+}) {
+  const [form, setForm] = useState<TaskFormState>(() => buildTaskForm(task));
+
+  useEffect(() => {
+    setForm(buildTaskForm(task));
+  }, [task]);
+
+  if (!task) return null;
+
+  const updateField = <K extends keyof TaskFormState>(key: K, value: TaskFormState[K]) =>
+    setForm((prev) => ({ ...prev, [key]: value }));
+
   const handleSave = () => {
-    onSave({ title: form.title.trim(), description: form.description.trim()||undefined, priority: form.priority, dueDate: form.dueDate||undefined, dueTime: form.dueTime||undefined, focusMinutes: Math.min(480,Math.max(5,Number(form.focusMinutes)||30)), category: form.category.trim()||"General", tags: parseTagsInput(form.tagsInput), completed: form.completed });
+    onSave({
+      title: form.title.trim(),
+      description: form.description.trim() || undefined,
+      priority: form.priority,
+      dueDate: form.dueDate || undefined,
+      dueTime: form.dueTime || undefined,
+      focusMinutes: clampMinutes(Number(form.focusMinutes) || 30, 5, 480),
+      category: form.category.trim() || "General",
+      tags: parseTagsInput(form.tagsInput),
+      completed: form.completed,
+      completedAt: form.completed
+        ? task.completedAt ?? new Date().toISOString()
+        : undefined,
+    });
     onOpenChange(false);
   };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
-        <DialogHeader><DialogTitle className="flex items-center gap-2"><PencilLine className="h-4 w-4 text-neon-cyan"/>Edit Task</DialogTitle><DialogDescription>Refine any detail manually.</DialogDescription></DialogHeader>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <PencilLine className="h-4 w-4 text-neon-cyan" />
+            Edit Task
+          </DialogTitle>
+          <DialogDescription>Refine any detail manually.</DialogDescription>
+        </DialogHeader>
+
         <div className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-[1.6fr_1fr]"><div className="space-y-2"><label className="text-xs text-muted-foreground">Title</label><input value={form.title} onChange={e=>updateField("title",e.target.value)} className="glass w-full rounded-xl px-3 py-2 text-sm outline-none"/></div><div className="space-y-2"><label className="text-xs text-muted-foreground">Category</label><input value={form.category} onChange={e=>updateField("category",e.target.value)} className="glass w-full rounded-xl px-3 py-2 text-sm outline-none"/></div></div>
-          <div className="space-y-2"><label className="text-xs text-muted-foreground">Description</label><textarea value={form.description} onChange={e=>updateField("description",e.target.value)} className="glass w-full min-h-[96px] rounded-xl px-3 py-2 text-sm outline-none resize-none"/></div>
-          <div className="grid gap-3 md:grid-cols-4"><div className="space-y-2"><label className="text-xs text-muted-foreground">Priority</label><select value={form.priority} onChange={e=>updateField("priority",e.target.value as Priority)} className="glass w-full rounded-xl px-3 py-2 text-sm outline-none"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div><div className="space-y-2"><label className="text-xs text-muted-foreground">Due date</label><input type="date" value={form.dueDate} onChange={e=>updateField("dueDate",e.target.value)} className="glass w-full rounded-xl px-3 py-2 text-sm outline-none"/></div><div className="space-y-2"><label className="text-xs text-muted-foreground">Due time</label><input type="time" value={form.dueTime} onChange={e=>updateField("dueTime",e.target.value)} className="glass w-full rounded-xl px-3 py-2 text-sm outline-none"/></div><div className="space-y-2"><label className="text-xs text-muted-foreground">Focus mins</label><input type="number" min={5} max={480} value={form.focusMinutes} onChange={e=>updateField("focusMinutes",Number(e.target.value))} className="glass w-full rounded-xl px-3 py-2 text-sm outline-none"/></div></div>
-          <div className="space-y-2"><label className="text-xs text-muted-foreground">Tags</label><input value={form.tagsInput} onChange={e=>updateField("tagsInput",e.target.value)} placeholder="study, course, urgent" className="glass w-full rounded-xl px-3 py-2 text-sm outline-none"/></div>
-          <div className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3"><div><p className="text-sm font-medium">Completion state</p><p className="text-xs text-muted-foreground">{form.completed?"This task is marked as complete.":"This task is still active."}</p></div><button type="button" onClick={()=>updateField("completed",!form.completed)} className={`rounded-xl px-3 py-2 text-xs font-medium transition ${form.completed?"bg-neon-cyan/10 text-neon-cyan border border-neon-cyan/20":"bg-white/10 text-white border border-white/10"}`}>{form.completed?"Mark active":"Mark complete"}</button></div>
-          <div className="flex flex-wrap gap-2 pt-1"><button type="button" onClick={onDelete} className="rounded-xl border border-neon-pink/30 bg-neon-pink/10 px-4 py-2 text-sm font-medium text-neon-pink">Delete task</button><div className="flex-1"/><button type="button" onClick={()=>onOpenChange(false)} className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium">Cancel</button><button type="button" onClick={handleSave} className="rounded-xl bg-gradient-primary px-4 py-2 text-sm font-medium text-white glow-soft">Save changes</button></div>
+          <div className="grid gap-3 md:grid-cols-[1.6fr_1fr]">
+            <div className="space-y-2">
+              <label className="text-xs text-muted-foreground">Title</label>
+              <input
+                value={form.title}
+                onChange={(e) => updateField("title", e.target.value)}
+                className="glass w-full rounded-xl px-3 py-2 text-sm outline-none"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs text-muted-foreground">Category</label>
+              <input
+                value={form.category}
+                onChange={(e) => updateField("category", e.target.value)}
+                className="glass w-full rounded-xl px-3 py-2 text-sm outline-none"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-xs text-muted-foreground">Description</label>
+            <textarea
+              value={form.description}
+              onChange={(e) => updateField("description", e.target.value)}
+              className="glass w-full min-h-[96px] rounded-xl px-3 py-2 text-sm outline-none resize-none"
+            />
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-4">
+            <div className="space-y-2">
+              <label className="text-xs text-muted-foreground">Priority</label>
+              <select
+                value={form.priority}
+                onChange={(e) => updateField("priority", e.target.value as Priority)}
+                className="glass w-full rounded-xl px-3 py-2 text-sm outline-none"
+              >
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs text-muted-foreground">Due date</label>
+              <input
+                type="date"
+                value={form.dueDate}
+                onChange={(e) => updateField("dueDate", e.target.value)}
+                className="glass w-full rounded-xl px-3 py-2 text-sm outline-none"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs text-muted-foreground">Due time</label>
+              <input
+                type="time"
+                value={form.dueTime}
+                onChange={(e) => updateField("dueTime", e.target.value)}
+                className="glass w-full rounded-xl px-3 py-2 text-sm outline-none"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs text-muted-foreground">Focus mins</label>
+              <input
+                type="number"
+                min={5}
+                max={480}
+                value={form.focusMinutes}
+                onChange={(e) => updateField("focusMinutes", Number(e.target.value))}
+                className="glass w-full rounded-xl px-3 py-2 text-sm outline-none"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-xs text-muted-foreground">Tags</label>
+            <input
+              value={form.tagsInput}
+              onChange={(e) => updateField("tagsInput", e.target.value)}
+              placeholder="study, course, urgent"
+              className="glass w-full rounded-xl px-3 py-2 text-sm outline-none"
+            />
+          </div>
+
+          <div className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+            <div>
+              <p className="text-sm font-medium">Completion state</p>
+              <p className="text-xs text-muted-foreground">
+                {form.completed ? "This task is marked as complete." : "This task is still active."}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => updateField("completed", !form.completed)}
+              className={`rounded-xl px-3 py-2 text-xs font-medium transition ${
+                form.completed
+                  ? "bg-neon-cyan/10 text-neon-cyan border border-neon-cyan/20"
+                  : "bg-white/10 text-white border border-white/10"
+              }`}
+            >
+              {form.completed ? "Mark active" : "Mark complete"}
+            </button>
+          </div>
+
+          <div className="flex flex-wrap gap-2 pt-1">
+            <button
+              type="button"
+              onClick={onDelete}
+              className="rounded-xl border border-neon-pink/30 bg-neon-pink/10 px-4 py-2 text-sm font-medium text-neon-pink"
+            >
+              Delete task
+            </button>
+            <div className="flex-1" />
+            <button
+              type="button"
+              onClick={() => onOpenChange(false)}
+              className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              className="rounded-xl bg-gradient-primary px-4 py-2 text-sm font-medium text-white glow-soft"
+            >
+              Save changes
+            </button>
+          </div>
         </div>
       </DialogContent>
     </Dialog>
@@ -199,9 +904,25 @@ function TaskEditorDialog({ task, open, onOpenChange, onSave, onDelete }) {
 // ---------- Main Page ----------
 function TasksPage() {
   const {
-    tasks, habits, goals, lifeContext, focusSessions, playlistImports, assistantMessages,
-    addTask, batchAddTasks, addGoal, toggleTask, deleteTask, updateTask, addAssistantMessage, userName,
+    tasks,
+    habits,
+    goals,
+    lifeContext,
+    focusSessions,
+    playlistImports,
+    assistantMessages,
+    addTask,
+    batchAddTasks,
+    addGoal,
+    toggleTask,
+    deleteTask,
+    updateTask,
+    addAssistantMessage,
+    userName,
   } = useStore();
+
+  const [now, setNow] = useState(() => new Date());
+  const todayStr = useMemo(() => formatLocalDate(now), [now]);
 
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [searchQuery, setSearchQuery] = useState("");
@@ -213,475 +934,921 @@ function TasksPage() {
   const [generatedPlan, setGeneratedPlan] = useState<GeneratedPlan | null>(null);
   const [showPlanConfirmation, setShowPlanConfirmation] = useState(false);
   const [pendingTasks, setPendingTasks] = useState<TaskInput[]>([]);
-  const [coachData, setCoachData] = useState<{mostProductiveHour:string; weakArea:string; suggestion:string} | null>(null);
+  const [coachData, setCoachData] = useState<{
+    mostProductiveHour: string;
+    weakArea: string;
+    suggestion: string;
+  } | null>(null);
   const [isCoachLoading, setIsCoachLoading] = useState(false);
+
   const coachSignatureRef = useRef<string | null>(null);
 
-  // ---------- Stats ----------
-  const stats = useMemo(()=>{
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const stats = useMemo(() => {
     const total = tasks.length;
-    const completed = tasks.filter(t=>t.completed).length;
-    const pending = total-completed;
-    const todayTasks = tasks.filter(t=>t.dueDate===todayStr);
-    const completedToday = todayTasks.filter(t=>t.completed).length;
-    const overdue = tasks.filter(t=>isTaskOverdue(t)).length;
-    const completionRate = total?Math.round((completed/total)*100):0;
-    const streak = calculateCompletionStreak(tasks);
+    const completed = tasks.filter((t) => t.completed).length;
+    const pending = total - completed;
+    const todayTasks = tasks.filter((t) => t.dueDate === todayStr);
+    const completedToday = todayTasks.filter((t) => t.completed).length;
+    const overdue = tasks.filter((t) => isTaskOverdue(t, now)).length;
+    const completionRate = total ? Math.round((completed / total) * 100) : 0;
+    const streak = calculateCompletionStreak(tasks, todayStr);
+
     const weekly = new Array(7).fill(0);
-    for(let i=0;i<7;i++){ const ds = addLocalDays(todayStr,-(6-i)); weekly[i]=tasks.filter(t=>t.completed && t.dueDate===ds).length; }
-    return { total, completed, pending, completedToday, todayTotal: todayTasks.length, overdue, completionRate, streak, weekly };
-  },[tasks]);
+    const base = new Date(`${todayStr}T00:00:00`);
+    for (let i = 0; i < 7; i++) {
+      const ds = formatLocalDate(shiftDate(base, -(6 - i)));
+      weekly[i] = tasks.filter((t) => t.completed && t.dueDate === ds).length;
+    }
 
-  const editingTask = useMemo(()=>tasks.find(t=>t.id===editingTaskId)??null,[editingTaskId,tasks]);
-  const focusToday = useMemo(()=>focusSessions.find(s=>s.date===todayStr)?.minutes??0,[focusSessions]);
+    return {
+      total,
+      completed,
+      pending,
+      completedToday,
+      todayTotal: todayTasks.length,
+      overdue,
+      completionRate,
+      streak,
+      weekly,
+    };
+  }, [tasks, todayStr, now]);
 
-  // ---------- Reschedule overdue tasks (smart) ----------
-  const rescheduleOverdueTasks = useCallback(()=>{
-    const overdueTasks = tasks.filter(t=>isTaskOverdue(t)).sort((a,b)=>(a.dueDate??"").localeCompare(b.dueDate??"") || a.createdAt.localeCompare(b.createdAt));
-    if(overdueTasks.length===0) return 0;
-    const preferredStart = toTimeMinutes(lifeContext.preferredStudyHours.start)??540;
+  const editingTask = useMemo(
+    () => tasks.find((t) => t.id === editingTaskId) ?? null,
+    [editingTaskId, tasks]
+  );
+
+  const focusToday = useMemo(
+    () => focusSessions.find((s) => s.date === todayStr)?.minutes ?? 0,
+    [focusSessions, todayStr]
+  );
+
+  const rescheduleOverdueTasks = useCallback(() => {
+    const overdueTasks = tasks
+      .filter((t) => isTaskOverdue(t, now))
+      .sort(
+        (a, b) =>
+          (a.dueDate ?? "").localeCompare(b.dueDate ?? "") ||
+          a.createdAt.localeCompare(b.createdAt)
+      );
+
+    if (overdueTasks.length === 0) return 0;
+
+    const preferredStart = toTimeMinutes(lifeContext.preferredStudyHours.start) ?? 540;
     const preferredEnd = toTimeMinutes(lifeContext.preferredStudyHours.end);
-    const daySpan = preferredEnd!=null ? (preferredEnd>preferredStart ? preferredEnd-preferredStart : 24*60 - preferredStart + preferredEnd) : 0;
-    const dayCapacity = daySpan>0 ? Math.max(90,daySpan) : 180;
-    let updated=0, cursorDate = new Date(`${todayStr}T00:00:00`), usedToday=0;
-    overdueTasks.forEach(task=>{
-      const effort = Math.max(15,Math.min(240,task.focusMinutes||30));
-      if(usedToday>0 && usedToday+effort>dayCapacity){ cursorDate = new Date(cursorDate.getTime()+DAY_MS); usedToday=0; }
+    const windowMinutes =
+      preferredEnd != null
+        ? preferredEnd > preferredStart
+          ? preferredEnd - preferredStart
+          : 24 * 60 - preferredStart + preferredEnd
+        : 180;
+
+    const dayCapacity = Math.max(90, windowMinutes);
+    const gapMinutes = 10;
+
+    let updated = 0;
+    let cursorDate = new Date(`${todayStr}T00:00:00`);
+    cursorDate = shiftDate(cursorDate, 1);
+    let usedToday = 0;
+
+    overdueTasks.forEach((task) => {
+      const effort = clampMinutes(task.focusMinutes || 30, 15, 240);
+
+      if (usedToday > 0 && usedToday + effort > dayCapacity) {
+        cursorDate = shiftDate(cursorDate, 1);
+        usedToday = 0;
+      }
+
       const dueDate = formatLocalDate(cursorDate);
       const dueTime = minutesToClock(preferredStart + usedToday);
-      updateTask(task.id,{ dueDate, dueTime });
-      usedToday+=effort;
+
+      updateTask(task.id, { dueDate, dueTime });
+      usedToday += effort + gapMinutes;
       updated++;
     });
+
     return updated;
-  },[lifeContext.preferredStudyHours, tasks, updateTask]);
+  }, [tasks, now, lifeContext.preferredStudyHours, todayStr, updateTask]);
 
-  // ---------- Define contexts (must be before handlers that use them) ----------
-  const coachContext = useMemo<AiContext>(()=>({
-    userName, today:todayStr,
-    tasks: tasks.map(t=>({ id:t.id, title:t.title, description:t.description, dueDate:t.dueDate, dueTime:t.dueTime, priority:t.priority, category:t.category, focusMinutes:t.focusMinutes, tags:t.tags, completed:t.completed })),
-    habits: habits.map(h=>({ id:h.id, name:h.name, emoji:h.emoji, doneToday:Boolean(h.history[todayStr]) })),
-    focusToday, streakCount:stats.streak,
-    goals: goals.map(g=>({ id:g.id, title:g.title, progress:g.progress, deadline:g.deadline, category:g.category, status:g.status })),
-    lifeContext: {
-      collegeTimetable: lifeContext.collegeTimetable.map(e=>({ day:e.day, start:e.start, end:e.end, label:e.label })),
-      exams: lifeContext.exams.map(e=>({ title:e.title, date:e.date, course:e.course })),
-      internships: lifeContext.internships.map(i=>({ company:i.company, role:i.role, startDate:i.startDate, endDate:i.endDate, status:i.status })),
-      sleepSchedule: lifeContext.sleepSchedule, preferredStudyHours: lifeContext.preferredStudyHours, placementGoals: lifeContext.placementGoals,
-    },
-    recentMessages: [], playlistImports: playlistImports.map(p=>({ id:p.id, title:p.title, items:p.items }))
-  }),[focusToday,goals,habits,lifeContext,playlistImports,stats.streak,tasks,userName]);
+  const coachContext = useMemo<AiContext>(
+    () => ({
+      userName,
+      today: todayStr,
+      tasks: tasks.map((t) => ({
+        id: t.id,
+        title: t.title,
+        description: t.description,
+        dueDate: t.dueDate,
+        dueTime: t.dueTime,
+        priority: t.priority,
+        category: t.category,
+        focusMinutes: t.focusMinutes,
+        tags: t.tags,
+        completed: t.completed,
+      })),
+      habits: habits.map((h) => ({
+        id: h.id,
+        name: h.name,
+        emoji: h.emoji,
+        doneToday: Boolean(h.history[todayStr]),
+      })),
+      focusToday,
+      streakCount: stats.streak,
+      goals: goals.map((g) => ({
+        id: g.id,
+        title: g.title,
+        progress: g.progress,
+        deadline: g.deadline,
+        category: g.category,
+        status: g.status,
+      })),
+      lifeContext: {
+        collegeTimetable: lifeContext.collegeTimetable.map((e) => ({
+          day: e.day,
+          start: e.start,
+          end: e.end,
+          label: e.label,
+        })),
+        exams: lifeContext.exams.map((e) => ({ title: e.title, date: e.date, course: e.course })),
+        internships: lifeContext.internships.map((i) => ({
+          company: i.company,
+          role: i.role,
+          startDate: i.startDate,
+          endDate: i.endDate,
+          status: i.status,
+        })),
+        sleepSchedule: lifeContext.sleepSchedule,
+        preferredStudyHours: lifeContext.preferredStudyHours,
+        placementGoals: lifeContext.placementGoals,
+      },
+      recentMessages: assistantMessages.slice(-12).map((m) => ({ role: m.role, text: m.text })),
+      playlistImports: playlistImports.map((p) => ({ id: p.id, title: p.title, items: p.items })),
+    }),
+    [
+      assistantMessages,
+      focusToday,
+      goals,
+      habits,
+      lifeContext,
+      playlistImports,
+      stats.streak,
+      tasks,
+      todayStr,
+      userName,
+    ]
+  );
 
-  const taskCommandContext = useMemo<AiContext>(()=>({
-    userName, today:todayStr,
-    tasks: tasks.map(t=>({ id:t.id, title:t.title, description:t.description, dueDate:t.dueDate, dueTime:t.dueTime, priority:t.priority, category:t.category, focusMinutes:t.focusMinutes, tags:t.tags, completed:t.completed })),
-    habits: habits.map(h=>({ id:h.id, name:h.name, emoji:h.emoji, doneToday:Boolean(h.history[todayStr]) })),
-    focusToday, streakCount:stats.streak,
-    goals: goals.map(g=>({ id:g.id, title:g.title, progress:g.progress, deadline:g.deadline, category:g.category, status:g.status })),
-    lifeContext: {
-      collegeTimetable: lifeContext.collegeTimetable.map(e=>({ day:e.day, start:e.start, end:e.end, label:e.label })),
-      exams: lifeContext.exams.map(e=>({ title:e.title, date:e.date, course:e.course })),
-      internships: lifeContext.internships.map(i=>({ company:i.company, role:i.role, startDate:i.startDate, endDate:i.endDate, status:i.status })),
-      sleepSchedule: lifeContext.sleepSchedule, preferredStudyHours: lifeContext.preferredStudyHours, placementGoals: lifeContext.placementGoals,
-    },
-    recentMessages: assistantMessages.slice(-12).map(m=>({ role:m.role, text:m.text })),
-    playlistImports: playlistImports.map(p=>({ id:p.id, title:p.title, items:p.items }))
-  }),[assistantMessages,focusToday,goals,habits,lifeContext,playlistImports,stats.streak,tasks,userName]);
+  const taskCommandContext = useMemo<AiContext>(
+    () => ({
+      userName,
+      today: todayStr,
+      tasks: tasks.map((t) => ({
+        id: t.id,
+        title: t.title,
+        description: t.description,
+        dueDate: t.dueDate,
+        dueTime: t.dueTime,
+        priority: t.priority,
+        category: t.category,
+        focusMinutes: t.focusMinutes,
+        tags: t.tags,
+        completed: t.completed,
+      })),
+      habits: habits.map((h) => ({
+        id: h.id,
+        name: h.name,
+        emoji: h.emoji,
+        doneToday: Boolean(h.history[todayStr]),
+      })),
+      focusToday,
+      streakCount: stats.streak,
+      goals: goals.map((g) => ({
+        id: g.id,
+        title: g.title,
+        progress: g.progress,
+        deadline: g.deadline,
+        category: g.category,
+        status: g.status,
+      })),
+      lifeContext: {
+        collegeTimetable: lifeContext.collegeTimetable.map((e) => ({
+          day: e.day,
+          start: e.start,
+          end: e.end,
+          label: e.label,
+        })),
+        exams: lifeContext.exams.map((e) => ({ title: e.title, date: e.date, course: e.course })),
+        internships: lifeContext.internships.map((i) => ({
+          company: i.company,
+          role: i.role,
+          startDate: i.startDate,
+          endDate: i.endDate,
+          status: i.status,
+        })),
+        sleepSchedule: lifeContext.sleepSchedule,
+        preferredStudyHours: lifeContext.preferredStudyHours,
+        placementGoals: lifeContext.placementGoals,
+      },
+      recentMessages: assistantMessages.slice(-12).map((m) => ({ role: m.role, text: m.text })),
+      playlistImports: playlistImports.map((p) => ({ id: p.id, title: p.title, items: p.items })),
+    }),
+    [
+      assistantMessages,
+      focusToday,
+      goals,
+      habits,
+      lifeContext,
+      playlistImports,
+      stats.streak,
+      tasks,
+      todayStr,
+      userName,
+    ]
+  );
 
-  // ---------- Pasted list parser (handles multi-line YouTube copy-paste) ----------
-  // YouTube copy format puts each field on its own line:
-  //   54          ← index number
-  //   true        ← "in watch later" flag
-  //   22:22       ← duration
-  //   Now playing ← label (optional)
-  //   Performance: Reflow ... ← TITLE  ← this is what we want
-  // We group these into blocks and extract the title + duration from each block.
-  const handlePastedListCommand = useCallback((command: string) => {
-    // Broad intent check — covers "make", "create", "add", "today", "want", "complete", "watch", "study", "finish", "these", "task"
-    const hasPasteIntent = /\b(make|create|add|schedule|task|tasks|today|these|this|want|complete|finish|watch|study|learn)\b/i.test(command);
-    if (!hasPasteIntent) return null;
+  const handlePastedListCommand = useCallback(
+    (command: string) => {
+      const items = parsePastedList(command);
+      if (items.length === 0) return null;
 
-    const rawLines = command.split(/\r?\n/).map(l => l.trim());
+      const targetDays = extractTargetDays(
+        command,
+        Math.max(1, Math.ceil(items.length / 5))
+      );
 
-    type ParsedItem = { title: string; durationMinutes: number | null };
-    const items: ParsedItem[] = [];
+      const title = items.length === 1 ? items[0].title : "Task Roadmap";
+      const description = `${items.length} item${
+        items.length > 1 ? "s" : ""
+      } scheduled over ${targetDays} day${targetDays > 1 ? "s" : ""}.`;
 
-    // ── Strategy 1: multi-line YouTube block (index / true|false / mm:ss / [Now playing] / title)
-    // Scan for blocks: a line that is JUST a number, followed by "true"/"false", then duration, then optional "Now playing", then title
-    let i = 0;
-    while (i < rawLines.length) {
-      const l0 = rawLines[i] ?? "";
-      const l1 = rawLines[i + 1] ?? "";
-      const l2 = rawLines[i + 2] ?? "";
-      const l3 = rawLines[i + 3] ?? "";
-      const l4 = rawLines[i + 4] ?? "";
-
-      const isIndex   = /^\d+$/.test(l0);
-      const isFlag    = /^(true|false)$/i.test(l1);
-      const isDur     = /^\d{1,2}:\d{2}(:\d{2})?$/.test(l2);
-
-      if (isIndex && isFlag && isDur) {
-        // Parse duration from l2
-        const dParts = l2.split(":").map(Number);
-        const durationMinutes = dParts.length === 3
-          ? dParts[0] * 60 + dParts[1]
-          : dParts[0] + Math.round(dParts[1] / 60);
-
-        // Check if next line is "Now playing" label (skip it)
-        const hasNowPlaying = /^now playing$/i.test(l3);
-        const titleLine = hasNowPlaying ? l4 : l3;
-
-        if (titleLine && titleLine.length > 3 && !/^\d+$/.test(titleLine) && !/^(true|false)$/i.test(titleLine)) {
-          // Clean up "|| Series Name" suffixes that clutter the title
-          const cleanTitle = titleLine.replace(/\s*\|\|.*$/, "").trim();
-          items.push({ title: cleanTitle, durationMinutes });
-          i += hasNowPlaying ? 5 : 4;
-          continue;
-        }
-      }
-      i++;
-    }
-
-    // ── Strategy 2 (fallback): single-line numbered format "54. Title" or "54) Title"
-    if (items.length === 0) {
-      for (const line of rawLines) {
-        const m = line.match(/^\d+[.)]\s+(.{4,})$/);
-        if (m) items.push({ title: m[1].trim(), durationMinutes: null });
-      }
-    }
-
-    // ── Strategy 3 (fallback): pure title lines (3+ words, no pure numbers, no flags)
-    if (items.length === 0) {
-      const skipPatterns = /^(true|false|now playing|\d+|make|create|add|task|want|complete|today|these|this|watch|study|learn|finish|schedule)$/i;
-      const durationPattern = /^\d{1,2}:\d{2}(:\d{2})?$/;
-      for (const line of rawLines) {
-        if (line.length < 8) continue;
-        if (skipPatterns.test(line)) continue;
-        if (durationPattern.test(line)) continue;
-        if (/^https?:\/\//i.test(line)) continue;
-        // Must look like a real title: at least one space or word longer than 6 chars
-        if (/\s/.test(line) || line.length > 10) {
-          items.push({ title: line.replace(/\s*\|\|.*$/, "").trim(), durationMinutes: null });
-        }
-      }
-    }
-
-    if (items.length < 1) return null;
-
-    const daysMatch = command.match(/(\d+)\s*days?\b/i);
-    const targetDays = daysMatch ? parseInt(daysMatch[1]) : 1;
-
-    const tasksDrafts: ReturnType<typeof buildTaskDrafts> = items.map((item, idx) => ({
-      title: item.title,
-      description: item.durationMinutes ? `Duration: ${item.durationMinutes} min` : `Item ${idx + 1}`,
-      priority: "medium" as const,
-      tags: ["ai-generated"],
-      focusMinutes: item.durationMinutes ?? 45,
-      category: "Study",
-      dueDate: addLocalDays(todayStr, Math.floor(idx / Math.ceil(items.length / targetDays))),
-      dueTime: (() => {
-        const tw = lifeContext.preferredStudyHours;
-        if (!tw) return undefined;
-        const [sh, sm] = tw.start.split(":").map(Number);
-        const [eh, em] = tw.end.split(":").map(Number);
-        const startMins = sh * 60 + sm;
-        const endMins = eh * 60 + em;
-        const span = endMins > startMins ? endMins - startMins : 24 * 60 - startMins + endMins;
-        const perDay = Math.ceil(items.length / targetDays);
-        const slot = Math.max(1, Math.floor(span / Math.max(1, perDay)));
-        const offset = (startMins + slot * (idx % perDay)) % (24 * 60);
-        return `${String(Math.floor(offset / 60)).padStart(2, "0")}:${String(offset % 60).padStart(2, "0")}`;
-      })(),
-    }));
-
-    const totalMinutes = items.reduce((s, v) => s + (v.durationMinutes ?? 45), 0);
-    const plan: GeneratedPlan = {
-      title: "Study Sessions",
-      description: `${items.length} session${items.length > 1 ? "s" : ""} scheduled over ${targetDays} day${targetDays > 1 ? "s" : ""}.`,
-      duration: `${targetDays} day${targetDays > 1 ? "s" : ""}`,
-      estimatedCommitment: `${Math.round(totalMinutes / targetDays)} min/day`,
-      items: [],
-      totalTasks: items.length,
-    };
-
-    return { plan, tasks: tasksDrafts };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lifeContext.preferredStudyHours]);
-
-  // ---------- YouTube playlist handler ----------
-
-  const handleYouTubePlaylistCommand = useCallback(async (command: string) => {
-    const urlMatch = command.match(/(https?:\/\/[^\s]+)/i);
-    if (!urlMatch) return null;
-    const url = urlMatch[0];
-    const daysMatch = command.match(/(\d+)\s*days?\b/i);
-    const targetDays = daysMatch ? parseInt(daysMatch[1]) : 30;
-    const source = await extractRoadmapSource({ data: { input: url } }).catch(err => {
-      console.error("Playlist fetch failed:", err);
-      return null;
-    });
-    if (!source || source.items.length === 0) return null;
-    const items = [];
-    const totalVideos = source.items.length;
-    const videosPerDay = Math.ceil(totalVideos / targetDays);
-    for (let day = 0; day < targetDays; day++) {
-      const startIdx = day * videosPerDay;
-      const endIdx = Math.min(startIdx + videosPerDay, totalVideos);
-      const dayVideos = source.items.slice(startIdx, endIdx);
-      if (dayVideos.length === 0) break;
-      items.push({
-        phase: `Day ${day+1}`,
-        description: `${dayVideos.length} video${dayVideos.length>1?'s':''} · ${dayVideos[0].title}${dayVideos.length>1?` +${dayVideos.length-1} more`:''}`,
-        taskCount: dayVideos.length,
-        taskTitles: dayVideos.map(v=>v.title),
-        taskDurationsMinutes: dayVideos.map(v=>v.durationMinutes??45),
+      return buildPlanFromItems({
+        title,
+        description,
+        targetDays,
+        items,
+        startDate: todayStr,
+        category: "Study",
+        tag: AI_TAG,
+        preferredStudyHours: lifeContext.preferredStudyHours,
       });
-    }
-    const plan: GeneratedPlan = {
-      title: source.title || "YouTube Playlist Roadmap",
-      description: `${totalVideos} videos scheduled over ${targetDays} days.`,
-      duration: `${targetDays} days`,
-      estimatedCommitment: `${Math.round((source.items.reduce((sum,v)=>sum+(v.durationMinutes??45),0)/targetDays))} min/day`,
-      items, totalTasks: totalVideos,
-    };
-    const tasksDrafts = buildTaskDrafts(plan, { startDate: todayStr, timeWindow: lifeContext.preferredStudyHours });
-    return { plan, tasks: tasksDrafts };
-  }, [lifeContext.preferredStudyHours]);
+    },
+    [lifeContext.preferredStudyHours, todayStr]
+  );
 
-  // ---------- AI handlers ----------
-  const handleAiCommand = useCallback(async (command: string) => {
-    setIsProcessing(true);
-    addAssistantMessage({ role: "user", text: command });
-    try {
-      // 0. Pasted numbered list (e.g. copied from YouTube / lecture notes)
-      const pastedPlan = handlePastedListCommand(command);
-      if (pastedPlan) {
-        setGeneratedPlan(pastedPlan.plan);
-        setPendingTasks(pastedPlan.tasks);
-        setShowPlanConfirmation(true);
-        addAssistantMessage({ role: "ai", text: `Parsed ${pastedPlan.tasks.length} items from your list into tasks. Review and confirm to add them!` });
-        return;
-      }
+  const handleYouTubePlaylistCommand = useCallback(
+    async (command: string) => {
+      const urlMatch = command.match(/(https?:\/\/[^\s]+)/i);
+      if (!urlMatch) return null;
 
-      // 1. YouTube playlist command
-      const playlistPlan = await handleYouTubePlaylistCommand(command);
-      if (playlistPlan) {
-        setGeneratedPlan(playlistPlan.plan);
-        setPendingTasks(playlistPlan.tasks);
-        setShowPlanConfirmation(true);
-        addAssistantMessage({ role: "ai", text: `Prepared a ${playlistPlan.plan.duration} plan from the playlist "${playlistPlan.plan.title}". Review to add ${playlistPlan.tasks.length} tasks.` });
-        return;
-      }
+      const url = urlMatch[0];
+      const source = await extractRoadmapSource({ data: { input: url } }).catch((err) => {
+        console.error("Playlist fetch failed:", err);
+        return null;
+      });
 
-      const parsed = parseCommand(command);
-      if (parsed.intent === "reschedule") {
-        const updated = rescheduleOverdueTasks();
-        addAssistantMessage({ role: "ai", text: updated ? `Rebalanced ${updated} overdue tasks.` : "No overdue tasks found." });
-        return;
-      }
-      if (parsed.intent === "plan_day") {
-        const response = await planDay(command, taskCommandContext);
-        addAssistantMessage({ role: "ai", text: response });
-        return;
-      }
-      if (parsed.intent === "plan_week") {
-        const response = await askAssistant({ data: { message: "Create a concise, actionable weekly plan from my current tasks, overdue work, goals, and study window.", context: taskCommandContext } });
-        addAssistantMessage({ role: "ai", text: response.response });
-        return;
-      }
-      if (parsed.intent === "prioritize") {
-        const response = await prioritizeTasks(command, taskCommandContext);
-        addAssistantMessage({ role: "ai", text: response });
-        return;
-      }
-      if (parsed.intent === "analyze") {
-        const response = await analyzeProductivity(command, taskCommandContext);
-        addAssistantMessage({ role: "ai", text: response });
-        return;
-      }
+      if (!source || !source.items || source.items.length === 0) return null;
 
-      if (/\b(edit|update|change|delete|remove|rename|complete|finish)\b/i.test(command) && !/\b(create|make|build|plan)\b/i.test(command)) {
-        addAssistantMessage({ role: "ai", text: "Pick a task card to edit, or tell me the exact task title and change." });
-        return;
-      }
+      return buildRoadmapFromPlaylist(source, command, todayStr, lifeContext.preferredStudyHours);
+    },
+    [lifeContext.preferredStudyHours, todayStr]
+  );
 
-      const looksLikeTaskCrud = /\b(add|create|make|build|edit|update|change|delete|remove|rename|complete|finish|schedule|postpone|move)\b/i.test(command) || /\b(task|tasks|todo|to-do|schedule)\b/i.test(command);
-      if (looksLikeTaskCrud) {
-        try {
-          const response = await askAssistant({ data: { message: command, context: taskCommandContext } });
-          if (response.actions?.length) {
-            const applied = applyAiActions(response.actions, { addTask, batchAddTasks, updateTask, deleteTask, addGoal });
-            addAssistantMessage({ role: "ai", text: `Applied ${applied} task change${applied===1?'':'s'}. ${response.response}`.trim() });
-          } else {
-            addAssistantMessage({ role: "ai", text: response.response });
+  const handleAiCommand = useCallback(
+    async (command: string) => {
+      setIsProcessing(true);
+      addAssistantMessage({ role: "user", text: command });
+
+      try {
+        const pastedPlan = handlePastedListCommand(command);
+        if (pastedPlan) {
+          setGeneratedPlan(pastedPlan.plan);
+          setPendingTasks(pastedPlan.tasks);
+          setShowPlanConfirmation(true);
+          addAssistantMessage({
+            role: "ai",
+            text: `Parsed ${pastedPlan.tasks.length} items into a day-wise plan. Review and confirm to add them.`,
+          });
+          return;
+        }
+
+        const playlistPlan = await handleYouTubePlaylistCommand(command);
+        if (playlistPlan) {
+          setGeneratedPlan(playlistPlan.plan);
+          setPendingTasks(playlistPlan.tasks);
+          setShowPlanConfirmation(true);
+          addAssistantMessage({
+            role: "ai",
+            text: `Prepared a ${playlistPlan.plan.duration} plan from the playlist. Review and confirm to add ${playlistPlan.tasks.length} tasks.`,
+          });
+          return;
+        }
+
+        const parsed = parseCommand(command);
+
+        if (parsed.intent === "reschedule") {
+          const updated = rescheduleOverdueTasks();
+          addAssistantMessage({
+            role: "ai",
+            text: updated ? `Rebalanced ${updated} overdue task${updated === 1 ? "" : "s"}.` : "No overdue tasks found.",
+          });
+          return;
+        }
+
+        if (parsed.intent === "plan_day") {
+          const response = await planDay(command, taskCommandContext);
+          addAssistantMessage({ role: "ai", text: response });
+          return;
+        }
+
+        if (parsed.intent === "plan_week") {
+          const response = await askAssistant({
+            data: {
+              message:
+                "Create a concise, actionable weekly plan from my current tasks, overdue work, goals, and study window.",
+              context: taskCommandContext,
+            },
+          });
+          addAssistantMessage({ role: "ai", text: response.response });
+          return;
+        }
+
+        if (parsed.intent === "prioritize") {
+          const response = await prioritizeTasks(command, taskCommandContext);
+          addAssistantMessage({ role: "ai", text: response });
+          return;
+        }
+
+        if (parsed.intent === "analyze") {
+          const response = await analyzeProductivity(command, taskCommandContext);
+          addAssistantMessage({ role: "ai", text: response });
+          return;
+        }
+
+        if (
+          /\b(edit|update|change|delete|remove|rename|complete|finish)\b/i.test(command) &&
+          !/\b(create|make|build|plan)\b/i.test(command)
+        ) {
+          addAssistantMessage({
+            role: "ai",
+            text: "Pick a task card to edit, or tell me the exact task title and change.",
+          });
+          return;
+        }
+
+        const looksLikeTaskCrud =
+          /\b(add|create|make|build|edit|update|change|delete|remove|rename|complete|finish|schedule|postpone|move)\b/i.test(
+            command
+          ) || /\b(task|tasks|todo|to-do|schedule)\b/i.test(command);
+
+        if (looksLikeTaskCrud) {
+          try {
+            const response = await askAssistant({
+              data: { message: command, context: taskCommandContext },
+            });
+
+            if (response.actions?.length) {
+              const applied = applyAiActions(response.actions, {
+                addTask,
+                batchAddTasks,
+                updateTask,
+                deleteTask,
+                addGoal,
+              });
+
+              addAssistantMessage({
+                role: "ai",
+                text: `Applied ${applied} task change${applied === 1 ? "" : "s"}. ${response.response}`.trim(),
+              });
+            } else {
+              addAssistantMessage({ role: "ai", text: response.response });
+            }
+          } catch {
+            const fallback = buildLocalRoadmapFallback(command, taskCommandContext);
+            setGeneratedPlan(fallback.plan);
+            setPendingTasks(fallback.tasks);
+            setShowPlanConfirmation(true);
+            addAssistantMessage({
+              role: "ai",
+              text: `Local roadmap prepared: "${fallback.plan.title}".`,
+            });
           }
+          return;
+        }
+
+        try {
+          const { plan, tasks: plannedTasks } = await generateTaskPlan(command, taskCommandContext);
+          setGeneratedPlan(plan);
+          setPendingTasks(plannedTasks);
+          setShowPlanConfirmation(true);
+          addAssistantMessage({
+            role: "ai",
+            text: `Created a ${plan.duration ?? "custom"} roadmap for "${plan.title}".`,
+          });
         } catch {
           const fallback = buildLocalRoadmapFallback(command, taskCommandContext);
           setGeneratedPlan(fallback.plan);
           setPendingTasks(fallback.tasks);
           setShowPlanConfirmation(true);
-          addAssistantMessage({ role: "ai", text: `Local roadmap prepared: "${fallback.plan.title}".` });
+          addAssistantMessage({
+            role: "ai",
+            text: `Local roadmap prepared: "${fallback.plan.title}".`,
+          });
         }
-        return;
+      } catch (error) {
+        console.error("AI command error:", error);
+        addAssistantMessage({
+          role: "ai",
+          text: "Sorry, I encountered an error. Please try again.",
+        });
+      } finally {
+        setIsProcessing(false);
       }
+    },
+    [
+      addAssistantMessage,
+      addGoal,
+      addTask,
+      batchAddTasks,
+      deleteTask,
+      handlePastedListCommand,
+      handleYouTubePlaylistCommand,
+      rescheduleOverdueTasks,
+      taskCommandContext,
+      updateTask,
+    ]
+  );
 
-      try {
-        const { plan, tasks: plannedTasks } = await generateTaskPlan(command, taskCommandContext);
-        setGeneratedPlan(plan);
-        setPendingTasks(plannedTasks);
-        setShowPlanConfirmation(true);
-        addAssistantMessage({ role: "ai", text: `Created a ${plan.duration??"custom"} roadmap for "${plan.title}".` });
-      } catch {
-        const fallback = buildLocalRoadmapFallback(command, taskCommandContext);
-        setGeneratedPlan(fallback.plan);
-        setPendingTasks(fallback.tasks);
-        setShowPlanConfirmation(true);
-        addAssistantMessage({ role: "ai", text: `Local roadmap prepared: "${fallback.plan.title}".` });
-      }
-    } catch (error) {
-      addAssistantMessage({ role: "ai", text: "Sorry, I encountered an error. Please try again." });
-    } finally {
-      setIsProcessing(false);
-    }
-  }, [addAssistantMessage, addGoal, addTask, batchAddTasks, deleteTask, handlePastedListCommand, handleYouTubePlaylistCommand, rescheduleOverdueTasks, taskCommandContext, updateTask]);
-
-  const handleQuickAction = useCallback(async (action: string) => {
-    await handleAiCommand(QUICK_ACTION_PROMPTS[action] || "Plan my day");
-  }, [handleAiCommand]);
+  const handleQuickAction = useCallback(
+    async (action: string) => {
+      await handleAiCommand(QUICK_ACTION_PROMPTS[action] || "Plan my day");
+    },
+    [handleAiCommand]
+  );
 
   const handleConfirmPlan = useCallback(() => {
-    if(!generatedPlan) return;
-    const newTasks = pendingTasks.length>0 ? pendingTasks : buildTaskDrafts(generatedPlan, { startDate: todayStr, timeWindow: lifeContext.preferredStudyHours });
+    if (!generatedPlan) return;
+
+    const newTasks =
+      pendingTasks.length > 0
+        ? pendingTasks
+        : buildTaskDrafts(generatedPlan, {
+            startDate: todayStr,
+            timeWindow: lifeContext.preferredStudyHours,
+          });
+
     batchAddTasks(newTasks);
-    addAssistantMessage({ role: "ai", text: `Generated ${newTasks.length} tasks for "${generatedPlan.title}".` });
+    addAssistantMessage({
+      role: "ai",
+      text: `Generated ${newTasks.length} task${newTasks.length === 1 ? "" : "s"} for "${generatedPlan.title}".`,
+    });
+
     setShowPlanConfirmation(false);
     setGeneratedPlan(null);
     setPendingTasks([]);
-  }, [addAssistantMessage, batchAddTasks, generatedPlan, lifeContext.preferredStudyHours, pendingTasks]);
+  }, [
+    addAssistantMessage,
+    batchAddTasks,
+    generatedPlan,
+    lifeContext.preferredStudyHours,
+    pendingTasks,
+    todayStr,
+  ]);
 
-  // ---------- Coach effect ----------
   useEffect(() => {
     let cancelled = false;
+
     const signature = JSON.stringify({
-      completed: stats.completed, overdue: stats.overdue, completionRate: stats.completionRate,
-      streak: stats.streak, focusToday, pending: stats.pending,
-      topTasks: tasks.slice(0,5).map(t=>({ title:t.title, priority:t.priority, dueDate:t.dueDate, completed:t.completed })),
+      completed: stats.completed,
+      overdue: stats.overdue,
+      completionRate: stats.completionRate,
+      streak: stats.streak,
+      focusToday,
+      pending: stats.pending,
+      topTasks: tasks.slice(0, 5).map((t) => ({
+        title: t.title,
+        priority: t.priority,
+        dueDate: t.dueDate,
+        completed: t.completed,
+      })),
     });
-    if(coachSignatureRef.current === signature) return ()=>{cancelled=true;};
+
+    if (coachSignatureRef.current === signature) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
     coachSignatureRef.current = signature;
     setIsCoachLoading(true);
-    void (async() => {
+
+    void (async () => {
       try {
         const insightData = await generateCoachInsight(coachContext);
-        if(!cancelled) setCoachData({ mostProductiveHour: insightData.mostProductiveHour, weakArea: insightData.weakArea, suggestion: insightData.suggestion });
+        if (!cancelled) {
+          setCoachData({
+            mostProductiveHour: insightData.mostProductiveHour,
+            weakArea: insightData.weakArea,
+            suggestion: insightData.suggestion,
+          });
+        }
       } catch {
-        if(!cancelled) setCoachData({ mostProductiveHour:"Morning", weakArea:"Task follow-through", suggestion:"Pick one high-priority task and protect a 45-minute focus block for it today." });
-      } finally { if(!cancelled) setIsCoachLoading(false); }
-    })();
-    return ()=>{cancelled=true;};
-  }, [coachContext, focusToday, stats.completed, stats.completionRate, stats.overdue, stats.pending, stats.streak, tasks]);
-
-  const insight = useMemo(()=>{
-    if(coachData?.suggestion) return coachData.suggestion;
-    if(stats.overdue>3) return "You have multiple overdue tasks. Focus on the oldest first to regain momentum.";
-    if(stats.completionRate>=80) return "You're crushing it! Keep the momentum by tackling high-energy tasks in the morning.";
-    if(stats.streak>=5) return `${stats.streak}-day streak! Consistency is your superpower.`;
-    return "Start with a quick win to build momentum.";
-  },[coachData,stats]);
-
-  // ---------- Filtering / grouping ----------
-  const filteredTasks = useMemo(()=>tasks.filter(task=>{
-    if(searchQuery && !task.title.toLowerCase().includes(searchQuery.toLowerCase()) && !task.tags?.some(t=>t.toLowerCase().includes(searchQuery.toLowerCase()))) return false;
-    switch(filter){
-      case "today": return task.dueDate===todayStr;
-      case "pending": return !task.completed;
-      case "done": return task.completed;
-      case "high": return task.priority==="high";
-      default: return true;
-    }
-  }),[tasks,searchQuery,filter]);
-  const { overdue, rest } = useMemo(()=>{
-    const overdueTasks = filteredTasks.filter(t=>isTaskOverdue(t));
-    const restTasks = filteredTasks.filter(t=>!overdueTasks.includes(t));
-    return { overdue: overdueTasks, rest: restTasks };
-  },[filteredTasks]);
-  const groups = useMemo(()=>{
-    const groupsMap: Record<string, Task[]> = {};
-    rest.forEach(task=>{
-      let key: string;
-      switch(groupBy){
-        case "dueDate": key = task.dueDate || "No date"; break;
-        case "priority": key = task.priority; break;
-        default: key = task.category || "Uncategorized";
+        if (!cancelled) {
+          setCoachData({
+            mostProductiveHour: "Morning",
+            weakArea: "Task follow-through",
+            suggestion:
+              "Pick one high-priority task and protect a 45-minute focus block for it today.",
+          });
+        }
+      } finally {
+        if (!cancelled) setIsCoachLoading(false);
       }
-      if(!groupsMap[key]) groupsMap[key]=[];
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    coachContext,
+    focusToday,
+    stats.completed,
+    stats.completionRate,
+    stats.overdue,
+    stats.pending,
+    stats.streak,
+    tasks,
+  ]);
+
+  const insight = useMemo(() => {
+    if (coachData?.suggestion) return coachData.suggestion;
+    if (stats.overdue > 3)
+      return "You have multiple overdue tasks. Focus on the oldest first to regain momentum.";
+    if (stats.completionRate >= 80)
+      return "You're crushing it! Keep the momentum by tackling high-energy tasks in the morning.";
+    if (stats.streak >= 5) return `${stats.streak}-day streak! Consistency is your superpower.`;
+    return "Start with a quick win to build momentum.";
+  }, [coachData, stats]);
+
+  const filteredTasks = useMemo(
+    () =>
+      tasks.filter((task) => {
+        if (
+          searchQuery &&
+          !task.title.toLowerCase().includes(searchQuery.toLowerCase()) &&
+          !task.tags?.some((t) => t.toLowerCase().includes(searchQuery.toLowerCase()))
+        ) {
+          return false;
+        }
+
+        switch (filter) {
+          case "today":
+            return task.dueDate === todayStr;
+          case "pending":
+            return !task.completed;
+          case "done":
+            return task.completed;
+          case "high":
+            return task.priority === "high";
+          default:
+            return true;
+        }
+      }),
+    [tasks, searchQuery, filter, todayStr]
+  );
+
+  const { overdue, rest } = useMemo(() => {
+    const overdueTasks = filteredTasks.filter((t) => isTaskOverdue(t, now));
+    const restTasks = filteredTasks.filter((t) => !overdueTasks.includes(t));
+    return { overdue: overdueTasks, rest: restTasks };
+  }, [filteredTasks, now]);
+
+  const groups = useMemo(() => {
+    const groupsMap: Record<string, Task[]> = {};
+
+    rest.forEach((task) => {
+      let key: string;
+      switch (groupBy) {
+        case "dueDate":
+          key = task.dueDate || "No date";
+          break;
+        case "priority":
+          key = task.priority;
+          break;
+        default:
+          key = task.category || "Uncategorized";
+      }
+
+      if (!groupsMap[key]) groupsMap[key] = [];
       groupsMap[key].push(task);
     });
-    const sortedKeys = Object.keys(groupsMap).sort((a,b)=>{
-      if(groupBy==="priority"){ const order:{[k:string]:number}={ high:0, medium:1, low:2 }; return (order[a]??3)-(order[b]??3); }
-      if(groupBy==="dueDate"){ if(a==="No date") return 1; if(b==="No date") return -1; return a.localeCompare(b); }
+
+    const sortedKeys = Object.keys(groupsMap).sort((a, b) => {
+      if (groupBy === "priority") {
+        const order: Record<string, number> = { high: 0, medium: 1, low: 2 };
+        return (order[a] ?? 3) - (order[b] ?? 3);
+      }
+      if (groupBy === "dueDate") {
+        if (a === "No date") return 1;
+        if (b === "No date") return -1;
+        return a.localeCompare(b);
+      }
       return a.localeCompare(b);
     });
+
     return { groupsMap, sortedKeys };
-  },[rest,groupBy]);
-  const boardCols = useMemo(()=>{
+  }, [rest, groupBy]);
+
+  const boardCols = useMemo(() => {
     const cols: Record<string, Task[]> = {};
-    rest.forEach(task=>{
+
+    rest.forEach((task) => {
       let key: string;
-      switch(groupBy){
-        case "dueDate": key = task.dueDate || "No date"; break;
-        case "priority": key = task.priority; break;
-        default: key = task.category || "Uncategorized";
+      switch (groupBy) {
+        case "dueDate":
+          key = task.dueDate || "No date";
+          break;
+        case "priority":
+          key = task.priority;
+          break;
+        default:
+          key = task.category || "Uncategorized";
       }
-      if(!cols[key]) cols[key]=[];
+
+      if (!cols[key]) cols[key] = [];
       cols[key].push(task);
     });
-    return cols;
-  },[groupBy,rest]);
 
-  // ---------- Render ----------
+    return cols;
+  }, [groupBy, rest]);
+
   return (
     <AppShell>
       <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <GlassCard className="p-5 flex items-center gap-6">
-            <div className="relative"><ProgressRing progress={stats.todayTotal?(stats.completedToday/stats.todayTotal)*100:0} size={80}/><span className="absolute inset-0 flex items-center justify-center text-sm font-bold">{stats.todayTotal?Math.round((stats.completedToday/stats.todayTotal)*100):0}%</span></div>
-            <div><h2 className="text-lg font-bold">Today's Mission</h2><p className="text-sm text-muted-foreground">{stats.completedToday} of {stats.todayTotal} completed</p><div className="mt-1 flex items-center gap-2 text-xs"><span className="flex items-center gap-1"><Flame className="h-3 w-3 text-orange-400"/> {stats.streak} day streak</span><span className="flex items-center gap-1 text-neon-pink"><AlertCircle className="h-3 w-3"/> {stats.overdue} overdue</span></div></div>
+            <div className="relative">
+              <ProgressRing
+                progress={stats.todayTotal ? (stats.completedToday / stats.todayTotal) * 100 : 0}
+                size={80}
+              />
+              <span className="absolute inset-0 flex items-center justify-center text-sm font-bold">
+                {stats.todayTotal ? Math.round((stats.completedToday / stats.todayTotal) * 100) : 0}%
+              </span>
+            </div>
+            <div>
+              <h2 className="text-lg font-bold">Today's Mission</h2>
+              <p className="text-sm text-muted-foreground">
+                {stats.completedToday} of {stats.todayTotal} completed
+              </p>
+              <div className="mt-1 flex items-center gap-2 text-xs">
+                <span className="flex items-center gap-1">
+                  <Flame className="h-3 w-3 text-orange-400" /> {stats.streak} day streak
+                </span>
+                <span className="flex items-center gap-1 text-neon-pink">
+                  <AlertCircle className="h-3 w-3" /> {stats.overdue} overdue
+                </span>
+              </div>
+            </div>
           </GlassCard>
-          <GlassCard className="p-5"><h3 className="text-sm font-semibold text-muted-foreground uppercase mb-2">This Week</h3><WeeklyChart completedByDay={stats.weekly}/></GlassCard>
-          <GlassCard className="p-5"><div className="flex items-center gap-2 mb-2"><Sparkles className="h-4 w-4 text-neon-purple"/><span className="text-sm font-semibold">AI Coach</span></div><p className="text-xs text-muted-foreground">{isCoachLoading?"Analyzing your current rhythm...":insight}</p><div className="mt-3 flex gap-2 text-[10px]"><span className="glass px-2 py-1 rounded-full">⏰ Best time: {coachData?.mostProductiveHour??"Morning"}</span><span className="glass px-2 py-1 rounded-full">⚡ {coachData?.weakArea??"High energy tasks first"}</span></div></GlassCard>
+
+          <GlassCard className="p-5">
+            <h3 className="text-sm font-semibold text-muted-foreground uppercase mb-2">This Week</h3>
+            <WeeklyChart completedByDay={stats.weekly} />
+          </GlassCard>
+
+          <GlassCard className="p-5">
+            <div className="flex items-center gap-2 mb-2">
+              <Sparkles className="h-4 w-4 text-neon-purple" />
+              <span className="text-sm font-semibold">AI Coach</span>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {isCoachLoading ? "Analyzing your current rhythm..." : insight}
+            </p>
+            <div className="mt-3 flex gap-2 text-[10px] flex-wrap">
+              <span className="glass px-2 py-1 rounded-full">
+                ⏰ Best time: {coachData?.mostProductiveHour ?? "Morning"}
+              </span>
+              <span className="glass px-2 py-1 rounded-full">
+                ⚡ {coachData?.weakArea ?? "High energy tasks first"}
+              </span>
+            </div>
+          </GlassCard>
         </div>
 
         <AiCommandPanel onSubmit={handleAiCommand} isLoading={isProcessing} />
         <AiQuickActions onAction={handleQuickAction} isLoading={isProcessing} />
-        <AiCoachCard completionRate={stats.completionRate} mostProductiveHour={coachData?.mostProductiveHour} weakArea={coachData?.weakArea} suggestion={coachData?.suggestion} tasksCompletedThisWeek={stats.completed} streakCount={stats.streak} />
+        <AiCoachCard
+          completionRate={stats.completionRate}
+          mostProductiveHour={coachData?.mostProductiveHour}
+          weakArea={coachData?.weakArea}
+          suggestion={coachData?.suggestion}
+          tasksCompletedThisWeek={stats.completed}
+          streakCount={stats.streak}
+        />
 
-        {overdue.length>0 && viewMode==="list" && (
-          <div className="space-y-2"><div className="flex items-center gap-2 text-sm font-bold text-neon-pink"><AlertCircle className="h-4 w-4"/> Overdue ({overdue.length})</div><div className="space-y-2">{overdue.map(task=><TaskCard key={task.id} task={task} onToggle={()=>toggleTask(task.id)} onDelete={()=>deleteTask(task.id)} onEdit={()=>setEditingTaskId(task.id)}/>)}</div></div>
-        )}
-
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="glass rounded-xl px-3 py-2 flex items-center gap-2 flex-1 min-w-[200px]"><Search className="h-4 w-4 text-muted-foreground"/><input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Search tasks..." className="bg-transparent outline-none text-sm flex-1"/></div>
-          <div className="flex gap-1">{(["all","today","pending","done","high"] as FilterType[]).map(f=><button key={f} onClick={()=>setFilter(f)} className={`px-3 py-1.5 rounded-lg text-xs capitalize ${filter===f?"bg-gradient-primary text-white glow-soft":"glass text-muted-foreground hover:text-foreground"}`}>{f}</button>)}</div>
-          <select value={groupBy} onChange={e=>setGroupBy(e.target.value as GroupBy)} className="glass rounded-lg px-3 py-1.5 text-xs outline-none"><option value="category">Group: Category</option><option value="dueDate">Group: Due Date</option><option value="priority">Group: Priority</option></select>
-          <div className="glass rounded-lg flex p-0.5"><button onClick={()=>setViewMode("list")} className={`p-1.5 rounded-md ${viewMode==="list"?"bg-white/10":""}`}><List className="h-4 w-4"/></button><button onClick={()=>setViewMode("board")} className={`p-1.5 rounded-md ${viewMode==="board"?"bg-white/10":""}`}><Columns className="h-4 w-4"/></button></div>
-          <button onClick={()=>setShowQuickAdd(prev=>!prev)} className="flex items-center gap-1 rounded-xl bg-gradient-primary px-3 py-2 text-xs font-medium text-white glow-soft"><Plus className="h-3.5 w-3.5"/> Quick Add</button>
-        </div>
-
-        <AnimatePresence>{showQuickAdd && <GlassCard className="p-4"><QuickAddForm onClose={()=>setShowQuickAdd(false)}/></GlassCard>}</AnimatePresence>
-
-        {viewMode==="list"?(
-          <div className="space-y-6">{groups.sortedKeys.map(key=><div key={key}><div className="flex items-center gap-2 mb-2 text-sm font-semibold text-muted-foreground uppercase"><div className="h-px flex-1 bg-white/10"/>{key}<div className="h-px flex-1 bg-white/10"/></div><div className="space-y-2">{groups.groupsMap[key].map(task=><TaskCard key={task.id} task={task} onToggle={()=>toggleTask(task.id)} onDelete={()=>deleteTask(task.id)} onEdit={()=>setEditingTaskId(task.id)}/>)}</div></div>)}
-          {rest.length===0 && overdue.length===0 && <div className="text-center py-12 text-muted-foreground">No missions found. Create your first one!</div>}</div>
-        ):(
-          <div className="space-y-4">
-            {overdue.length>0 && <div className="glass rounded-2xl p-4 border border-neon-pink/20"><div className="flex items-center justify-between mb-3"><h3 className="font-semibold text-sm text-neon-pink">Overdue ({overdue.length})</h3><button type="button" onClick={()=>handleAiCommand("Reschedule all overdue tasks")} className="inline-flex items-center gap-2 rounded-lg border border-neon-pink/30 bg-neon-pink/10 px-3 py-1.5 text-xs font-medium text-neon-pink"><RefreshCw className="h-3.5 w-3.5"/> Rebalance</button></div><div className="space-y-2">{overdue.map(task=><TaskCard key={task.id} task={task} onToggle={()=>toggleTask(task.id)} onDelete={()=>deleteTask(task.id)} onEdit={()=>setEditingTaskId(task.id)} compact/>)}</div></div>}
-            <div className="flex flex-wrap gap-4">{Object.entries(boardCols).map(([col, tasks])=><div key={col} className="glass rounded-xl p-4 flex-1 min-w-[250px] max-w-[400px]"><h3 className="font-semibold text-sm mb-3">{col} ({tasks.length})</h3><div className="space-y-2">{tasks.map(task=><TaskCard key={task.id} task={task} onToggle={()=>toggleTask(task.id)} onDelete={()=>deleteTask(task.id)} onEdit={()=>setEditingTaskId(task.id)} compact/>)}</div></div>)}</div>
+        {overdue.length > 0 && viewMode === "list" && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-sm font-bold text-neon-pink">
+              <AlertCircle className="h-4 w-4" /> Overdue ({overdue.length})
+            </div>
+            <div className="space-y-2">
+              {overdue.map((task) => (
+                <TaskCard
+                  key={task.id}
+                  task={task}
+                  onToggle={() => toggleTask(task.id)}
+                  onDelete={() => deleteTask(task.id)}
+                  onEdit={() => setEditingTaskId(task.id)}
+                />
+              ))}
+            </div>
           </div>
         )}
 
-        <TaskEditorDialog task={editingTask} open={Boolean(editingTask)} onOpenChange={open=>{if(!open) setEditingTaskId(null);}} onSave={patch=>{if(editingTask) updateTask(editingTask.id,patch);}} onDelete={()=>{if(editingTask){ deleteTask(editingTask.id); setEditingTaskId(null); }}} />
-        <PlanConfirmation plan={generatedPlan} isOpen={showPlanConfirmation} isLoading={isProcessing} onConfirm={handleConfirmPlan} onCancel={()=>setShowPlanConfirmation(false)} />
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="glass rounded-xl px-3 py-2 flex items-center gap-2 flex-1 min-w-[200px]">
+            <Search className="h-4 w-4 text-muted-foreground" />
+            <input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search tasks..."
+              className="bg-transparent outline-none text-sm flex-1"
+            />
+          </div>
+
+          <div className="flex gap-1 flex-wrap">
+            {(["all", "today", "pending", "done", "high"] as FilterType[]).map((f) => (
+              <button
+                key={f}
+                onClick={() => setFilter(f)}
+                className={`px-3 py-1.5 rounded-lg text-xs capitalize ${
+                  filter === f
+                    ? "bg-gradient-primary text-white glow-soft"
+                    : "glass text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
+
+          <select
+            value={groupBy}
+            onChange={(e) => setGroupBy(e.target.value as GroupBy)}
+            className="glass rounded-lg px-3 py-1.5 text-xs outline-none"
+          >
+            <option value="category">Group: Category</option>
+            <option value="dueDate">Group: Due Date</option>
+            <option value="priority">Group: Priority</option>
+          </select>
+
+          <div className="glass rounded-lg flex p-0.5">
+            <button
+              onClick={() => setViewMode("list")}
+              className={`p-1.5 rounded-md ${viewMode === "list" ? "bg-white/10" : ""}`}
+            >
+              <List className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => setViewMode("board")}
+              className={`p-1.5 rounded-md ${viewMode === "board" ? "bg-white/10" : ""}`}
+            >
+              <Columns className="h-4 w-4" />
+            </button>
+          </div>
+
+          <button
+            onClick={() => setShowQuickAdd((prev) => !prev)}
+            className="flex items-center gap-1 rounded-xl bg-gradient-primary px-3 py-2 text-xs font-medium text-white glow-soft"
+          >
+            <Plus className="h-3.5 w-3.5" /> Quick Add
+          </button>
+        </div>
+
+        <AnimatePresence>
+          {showQuickAdd && (
+            <GlassCard className="p-4">
+              <QuickAddForm onClose={() => setShowQuickAdd(false)} />
+            </GlassCard>
+          )}
+        </AnimatePresence>
+
+        {viewMode === "list" ? (
+          <div className="space-y-6">
+            {groups.sortedKeys.map((key) => (
+              <div key={key}>
+                <div className="flex items-center gap-2 mb-2 text-sm font-semibold text-muted-foreground uppercase">
+                  <div className="h-px flex-1 bg-white/10" />
+                  {key}
+                  <div className="h-px flex-1 bg-white/10" />
+                </div>
+                <div className="space-y-2">
+                  {groups.groupsMap[key].map((task) => (
+                    <TaskCard
+                      key={task.id}
+                      task={task}
+                      onToggle={() => toggleTask(task.id)}
+                      onDelete={() => deleteTask(task.id)}
+                      onEdit={() => setEditingTaskId(task.id)}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
+
+            {rest.length === 0 && overdue.length === 0 && (
+              <div className="text-center py-12 text-muted-foreground">
+                No missions found. Create your first one!
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {overdue.length > 0 && (
+              <div className="glass rounded-2xl p-4 border border-neon-pink/20">
+                <div className="flex items-center justify-between mb-3 gap-3">
+                  <h3 className="font-semibold text-sm text-neon-pink">
+                    Overdue ({overdue.length})
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => handleAiCommand("Reschedule all overdue tasks")}
+                    className="inline-flex items-center gap-2 rounded-lg border border-neon-pink/30 bg-neon-pink/10 px-3 py-1.5 text-xs font-medium text-neon-pink"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" /> Rebalance
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {overdue.map((task) => (
+                    <TaskCard
+                      key={task.id}
+                      task={task}
+                      onToggle={() => toggleTask(task.id)}
+                      onDelete={() => deleteTask(task.id)}
+                      onEdit={() => setEditingTaskId(task.id)}
+                      compact
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex flex-wrap gap-4">
+              {Object.entries(boardCols).map(([col, colTasks]) => (
+                <div
+                  key={col}
+                  className="glass rounded-xl p-4 flex-1 min-w-[250px] max-w-[400px]"
+                >
+                  <h3 className="font-semibold text-sm mb-3">
+                    {col} ({colTasks.length})
+                  </h3>
+                  <div className="space-y-2">
+                    {colTasks.map((task) => (
+                      <TaskCard
+                        key={task.id}
+                        task={task}
+                        onToggle={() => toggleTask(task.id)}
+                        onDelete={() => deleteTask(task.id)}
+                        onEdit={() => setEditingTaskId(task.id)}
+                        compact
+                      />
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <TaskEditorDialog
+          task={editingTask}
+          open={Boolean(editingTask)}
+          onOpenChange={(open) => {
+            if (!open) setEditingTaskId(null);
+          }}
+          onSave={(patch) => {
+            if (editingTask) updateTask(editingTask.id, patch);
+          }}
+          onDelete={() => {
+            if (editingTask) {
+              deleteTask(editingTask.id);
+              setEditingTaskId(null);
+            }
+          }}
+        />
+
+        <PlanConfirmation
+          plan={generatedPlan}
+          isOpen={showPlanConfirmation}
+          isLoading={isProcessing}
+          onConfirm={handleConfirmPlan}
+          onCancel={() => setShowPlanConfirmation(false)}
+        />
       </div>
     </AppShell>
   );
