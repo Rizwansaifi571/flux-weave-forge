@@ -220,6 +220,7 @@ interface State {
   logFocus: (minutes: number) => void;
   setWallpaper: (patch: Partial<WallpaperConfig>) => void;
   setUserName: (name: string) => void;
+  resetStore: () => void;
 }
 
 const today = () => formatLocalDate(new Date());
@@ -297,62 +298,68 @@ const calculateStreak = (
   return streak;
 };
 
+const getInitialState = () => ({
+  tasks: [
+    { id: uid(), title: "Ship WallTask AI v1", description: "Polish dashboard + wallpaper engine", priority: "high" as const, tags: ["product"], focusMinutes: 90, category: "Work", completed: false, createdAt: new Date().toISOString(), dueDate: today() },
+    { id: uid(), title: "Deep work: 2h focus block", priority: "high" as const, tags: ["focus"], focusMinutes: 120, category: "Focus", completed: false, createdAt: new Date().toISOString(), dueDate: today() },
+    { id: uid(), title: "Review weekly goals", priority: "medium" as const, tags: ["planning"], focusMinutes: 20, category: "Planning", completed: true, createdAt: new Date().toISOString(), completedAt: new Date().toISOString(), dueDate: today() },
+    { id: uid(), title: "Read 30 pages", priority: "low" as const, tags: ["habit"], focusMinutes: 30, category: "Learning", completed: false, createdAt: new Date().toISOString() },
+  ],
+  habits: [
+    { id: uid(), name: "Morning workout", emoji: "💪", color: "neon-purple", history: {}, createdAt: new Date().toISOString(), category: "fitness", difficulty: "medium" as const },
+    { id: uid(), name: "Read 30 min", emoji: "📚", color: "neon-blue", history: {}, createdAt: new Date().toISOString(), category: "learning", difficulty: "easy" as const, goal: { target: 30, current: 0, unit: "pages" } },
+    { id: uid(), name: "Meditate", emoji: "🧘", color: "neon-cyan", history: {}, createdAt: new Date().toISOString(), category: "spiritual", difficulty: "easy" as const },
+    { id: uid(), name: "No social media", emoji: "🚫", color: "neon-pink", history: {}, createdAt: new Date().toISOString(), category: "personal", difficulty: "hard" as const },
+  ],
+  goals: [],
+  lifeContext: {
+    collegeTimetable: [],
+    exams: [],
+    internships: [],
+    sleepSchedule: { bedtime: "23:30", wakeup: "07:30" },
+    preferredStudyHours: { start: "20:00", end: "00:00" },
+    placementGoals: [],
+  },
+  dailyBriefings: [],
+  behavior: {
+    productiveHours: {},
+    taskCompletionByType: {},
+    averageFocusDuration: 0,
+    bestDays: [],
+    patterns: [],
+  },
+  assistantMessages: [
+    {
+      id: uid(),
+      role: "ai" as const,
+      text: "I'm your productivity copilot. I see your tasks, habits, and focus patterns. Ask me anything — or let me suggest your next move.",
+      createdAt: new Date().toISOString(),
+    },
+  ],
+  playlistImports: [],
+  xp: 25, // Starts with 25 XP since 1 mock task is completed
+  level: 1, // Math.floor(25 / 500) + 1 = 1
+  focusSessions: getInitialFocusSessions(),
+  streakCount: 1, // 1 since 1 mock task is completed today
+  wallpaper: {
+    theme: "neon" as const,
+    opacity: 0.85,
+    showTasks: true,
+    showStreak: true,
+    showQuote: true,
+    showStats: true,
+    accent: "purple" as const,
+    font: "geist" as const,
+  },
+  userName: "Operator",
+});
+
 export const useStore = create<State>()(
   persist(
     (set, get) => ({
-      tasks: [
-        { id: uid(), title: "Ship WallTask AI v1", description: "Polish dashboard + wallpaper engine", priority: "high", tags: ["product"], focusMinutes: 90, category: "Work", completed: false, createdAt: new Date().toISOString(), dueDate: today() },
-        { id: uid(), title: "Deep work: 2h focus block", priority: "high", tags: ["focus"], focusMinutes: 120, category: "Focus", completed: false, createdAt: new Date().toISOString(), dueDate: today() },
-        { id: uid(), title: "Review weekly goals", priority: "medium", tags: ["planning"], focusMinutes: 20, category: "Planning", completed: true, createdAt: new Date().toISOString(), completedAt: new Date().toISOString(), dueDate: today() },
-        { id: uid(), title: "Read 30 pages", priority: "low", tags: ["habit"], focusMinutes: 30, category: "Learning", completed: false, createdAt: new Date().toISOString() },
-      ],
-      habits: [
-        { id: uid(), name: "Morning workout", emoji: "💪", color: "neon-purple", history: {}, createdAt: new Date().toISOString(), category: "fitness", difficulty: "medium" },
-        { id: uid(), name: "Read 30 min", emoji: "📚", color: "neon-blue", history: {}, createdAt: new Date().toISOString(), category: "learning", difficulty: "easy", goal: { target: 30, current: 0, unit: "pages" } },
-        { id: uid(), name: "Meditate", emoji: "🧘", color: "neon-cyan", history: {}, createdAt: new Date().toISOString(), category: "spiritual", difficulty: "easy" },
-        { id: uid(), name: "No social media", emoji: "🚫", color: "neon-pink", history: {}, createdAt: new Date().toISOString(), category: "personal", difficulty: "hard" },
-      ],
-      goals: [],
-      lifeContext: {
-        collegeTimetable: [],
-        exams: [],
-        internships: [],
-        sleepSchedule: { bedtime: "23:30", wakeup: "07:30" },
-        preferredStudyHours: { start: "20:00", end: "00:00" },
-        placementGoals: [],
-      },
-      dailyBriefings: [],
-      behavior: {
-        productiveHours: {},
-        taskCompletionByType: {},
-        averageFocusDuration: 0,
-        bestDays: [],
-        patterns: [],
-      },
-      assistantMessages: [
-        {
-          id: uid(),
-          role: "ai",
-          text: "I'm your productivity copilot. I see your tasks, habits, and focus patterns. Ask me anything — or let me suggest your next move.",
-          createdAt: new Date().toISOString(),
-        },
-      ],
-      playlistImports: [],
-      xp: 25, // Starts with 25 XP since 1 mock task is completed
-      level: 1, // Math.floor(25 / 500) + 1 = 1
-      focusSessions: getInitialFocusSessions(),
-      streakCount: 1, // 1 since 1 mock task is completed today
-      wallpaper: {
-        theme: "neon",
-        opacity: 0.85,
-        showTasks: true,
-        showStreak: true,
-        showQuote: true,
-        showStats: true,
-        accent: "purple",
-        font: "geist",
-      },
-      userName: "Operator",
+      ...getInitialState(),
+
+      resetStore: () => set(() => getInitialState()),
 
       // Task actions
       addTask: (t) => set((s) => {

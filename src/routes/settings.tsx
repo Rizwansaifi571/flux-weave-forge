@@ -40,6 +40,7 @@ function SettingsPage() {
             <button
               onClick={() => {
                 if (confirm("Are you sure you want to completely reset all your data? This cannot be undone.")) {
+                  useStore.getState().resetStore();
                   useStore.persist.clearStorage();
                   localStorage.removeItem("walltask-ai-store");
                   setTimeout(() => location.reload(), 100);

@@ -1007,6 +1007,7 @@ function TasksPage() {
   } | null>(null);
   const [isCoachLoading, setIsCoachLoading] = useState(false);
   const [rescheduleSummary, setRescheduleSummary] = useState<string | null>(null);
+  const [showReschedulePrompt, setShowReschedulePrompt] = useState(false);
 
   const coachSignatureRef = useRef<string | null>(null);
 
@@ -1105,7 +1106,7 @@ function TasksPage() {
       );
   }, [tasks, now]);
 
-const rescheduleOverdueTasks = useCallback((): RescheduleResult => {
+const rescheduleOverdueTasks = useCallback((strategy: "extend_deadline" | "increase_load" = "extend_deadline"): RescheduleResult => {
   // Find tasks that are actually overdue
   const strictlyOverdueTasks = tasks.filter((t) => isTaskOverdue(t, now));
   
@@ -1134,10 +1135,24 @@ const rescheduleOverdueTasks = useCallback((): RescheduleResult => {
     0
   );
 
-  const plannedDays = Math.max(
-    DEFAULT_RESCHEDULE_DAYS,
-    Math.ceil(totalMinutes / rescheduleDailyCapacity)
-  );
+  let plannedDays = 1;
+  if (strategy === "increase_load") {
+    let maxDate = todayStr;
+    for (const t of allTasksToReschedule) {
+      if (t.dueDate && t.dueDate > maxDate) maxDate = t.dueDate;
+    }
+    const msDiff = new Date(maxDate).getTime() - new Date(todayStr).getTime();
+    plannedDays = Math.max(1, Math.ceil(msDiff / (1000 * 3600 * 24)));
+  } else {
+    plannedDays = Math.max(
+      DEFAULT_RESCHEDULE_DAYS,
+      Math.ceil(totalMinutes / rescheduleDailyCapacity)
+    );
+  }
+
+  const dynamicCapacity = strategy === "increase_load" 
+    ? Math.max(15, Math.ceil(totalMinutes / plannedDays)) 
+    : rescheduleDailyCapacity;
 
   const startDate = shiftDate(new Date(`${todayStr}T00:00:00`), 1);
   const dayBuckets = Array.from({ length: plannedDays }, (_, index) => ({
@@ -1194,20 +1209,28 @@ const rescheduleOverdueTasks = useCallback((): RescheduleResult => {
       let scheduledIndex = -1;
 
       for (let index = idealDay; index < dayBuckets.length; index++) {
-        if (dayBuckets[index].usedMinutes + effort <= rescheduleDailyCapacity) {
+        if (dayBuckets[index].usedMinutes + effort <= dynamicCapacity) {
           scheduledIndex = index;
           break;
         }
       }
 
       while (scheduledIndex === -1) {
+        if (strategy === "increase_load") {
+          // Force into the least full bucket or idealDay if we run out of space, 
+          // but we shouldn't because dynamicCapacity is calculated to fit everything.
+          // Fallback just in case floating point/ceiling math leaves a remainder:
+          scheduledIndex = Math.min(dayBuckets.length - 1, idealDay);
+          break;
+        }
+
         dayBuckets.push({
           date: shiftDate(dayBuckets[dayBuckets.length - 1].date, 1),
           usedMinutes: 0,
         });
         extendedDeadline = true;
         scheduledIndex = dayBuckets.length - 1;
-        if (dayBuckets[scheduledIndex].usedMinutes + effort <= rescheduleDailyCapacity) {
+        if (dayBuckets[scheduledIndex].usedMinutes + effort <= dynamicCapacity) {
           break;
         }
       }
@@ -1246,7 +1269,7 @@ const rescheduleOverdueTasks = useCallback((): RescheduleResult => {
     .join("\n");
 
   const summary = [
-    `Rescheduled ${moved} task${moved === 1 ? "" : "s"} across ${dayBuckets.length} day${dayBuckets.length === 1 ? "" : "s"} (${formatMinutesHuman(rescheduleDailyCapacity)}/day). New deadline: ${finalDeadline}.`,
+    `Rescheduled ${moved} task${moved === 1 ? "" : "s"} across ${dayBuckets.length} day${dayBuckets.length === 1 ? "" : "s"} (${formatMinutesHuman(dynamicCapacity)}/day). New deadline: ${finalDeadline}.`,
     groupText,
     extendedDeadline
       ? "Workload exceeded the initial 7-day window, so the deadline was extended automatically."
@@ -1917,10 +1940,7 @@ const rescheduleOverdueTasks = useCallback((): RescheduleResult => {
 
                   <button
                     type="button"
-                    onClick={() => {
-                      const result = rescheduleOverdueTasks();
-                      addAssistantMessage({ role: "ai", text: result.summary });
-                    }}
+                    onClick={() => setShowReschedulePrompt(true)}
                     className="inline-flex items-center gap-2 rounded-lg border border-neon-pink/30 bg-neon-pink/10 px-3 py-1.5 text-xs font-medium text-neon-pink"
                   >
                     <RefreshCw className="h-3.5 w-3.5" />
@@ -2199,6 +2219,48 @@ const rescheduleOverdueTasks = useCallback((): RescheduleResult => {
           onConfirm={handleConfirmPlan}
           onCancel={() => setShowPlanConfirmation(false)}
         />
+
+        <Dialog open={showReschedulePrompt} onOpenChange={setShowReschedulePrompt}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="text-neon-pink flex items-center gap-2">
+                <RefreshCw className="h-4 w-4" />
+                Reschedule Strategy
+              </DialogTitle>
+              <DialogDescription>
+                How would you like to handle the overdue workload?
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4 mt-2">
+              <button
+                type="button"
+                className="w-full text-left p-4 rounded-xl border border-white/10 hover:border-neon-cyan/50 hover:bg-white/5 transition group"
+                onClick={() => {
+                  setShowReschedulePrompt(false);
+                  const result = rescheduleOverdueTasks("extend_deadline");
+                  addAssistantMessage({ role: "ai", text: result.summary });
+                }}
+              >
+                <div className="font-semibold text-white group-hover:text-neon-cyan transition">Extend Deadline</div>
+                <div className="text-xs text-muted-foreground mt-1">Keep the daily workload exactly the same, but extend the course into additional days.</div>
+              </button>
+
+              <button
+                type="button"
+                className="w-full text-left p-4 rounded-xl border border-white/10 hover:border-neon-pink/50 hover:bg-white/5 transition group"
+                onClick={() => {
+                  setShowReschedulePrompt(false);
+                  const result = rescheduleOverdueTasks("increase_load");
+                  addAssistantMessage({ role: "ai", text: result.summary });
+                }}
+              >
+                <div className="font-semibold text-white group-hover:text-neon-pink transition">Increase Daily Load</div>
+                <div className="text-xs text-muted-foreground mt-1">Finish by the original deadline by temporarily increasing the number of hours you study per day.</div>
+              </button>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     </AppShell>
   );
