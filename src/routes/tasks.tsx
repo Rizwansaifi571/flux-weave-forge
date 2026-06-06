@@ -1142,7 +1142,7 @@ const rescheduleOverdueTasks = useCallback((strategy: "extend_deadline" | "incre
       if (t.dueDate && t.dueDate > maxDate) maxDate = t.dueDate;
     }
     const msDiff = new Date(maxDate).getTime() - new Date(todayStr).getTime();
-    plannedDays = Math.max(1, Math.ceil(msDiff / (1000 * 3600 * 24)));
+    plannedDays = Math.max(1, Math.ceil(msDiff / (1000 * 3600 * 24)) + 1);
   } else {
     plannedDays = Math.max(
       DEFAULT_RESCHEDULE_DAYS,
@@ -1154,7 +1154,7 @@ const rescheduleOverdueTasks = useCallback((strategy: "extend_deadline" | "incre
     ? Math.max(15, Math.ceil(totalMinutes / plannedDays)) 
     : rescheduleDailyCapacity;
 
-  const startDate = shiftDate(new Date(`${todayStr}T00:00:00`), 1);
+  const startDate = new Date(`${todayStr}T00:00:00`);
   const dayBuckets = Array.from({ length: plannedDays }, (_, index) => ({
     date: shiftDate(startDate, index),
     usedMinutes: 0,
