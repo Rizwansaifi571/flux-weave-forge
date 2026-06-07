@@ -30,6 +30,9 @@ export const config = {
   get groqApiKey() {
     return process.env.GROQ_API_KEY ?? "";
   },
+  get groqApiKey1() {
+    return process.env.GROQ_API_KEY1 ?? "";
+  },
   get youtubeApiKey() {
     return process.env.YOUTUBE_API_KEY ?? "";
   },
