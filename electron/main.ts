@@ -279,9 +279,6 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
-  // Force 2x scaling globally so the offscreen wallpaper render is crisp 4K quality
-  app.commandLine.appendSwitch("force-device-scale-factor", "2");
-
   app.on("second-instance", () => openSettings());
 
   app.whenReady().then(() => {

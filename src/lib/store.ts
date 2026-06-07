@@ -154,7 +154,8 @@ export interface Habit {
 }
 
 export interface WallpaperConfig {
-  theme: "cyberpunk" | "minimal" | "neon" | "glass" | "anime" | "workspace";
+  theme: string;
+  customThemeBackground?: string;
   opacity: number;
   showTasks: boolean;
   maxTasksCount: number;
@@ -168,7 +169,8 @@ export interface WallpaperConfig {
   showClock?: boolean;
   showDate?: boolean;
   showDailyHabits?: boolean;
-  accent: "purple" | "blue" | "cyan" | "pink";
+  accent: string;
+  customAccentColor?: string;
   font: "geist" | "mono" | "serif";
 }
 

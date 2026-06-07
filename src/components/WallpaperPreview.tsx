@@ -1,23 +1,7 @@
 import { useStore, motivationalQuotes, todayStr } from "@/lib/store";
+import { type WallpaperConfig } from "../lib/store";
+import { getThemeBg, getAccentDetails } from "../lib/wallpaper-themes";
 import { useMemo } from "react";
-
-const THEME_STYLES: Record<string, string> = {
-  neon: "#06060a",
-  cyberpunk: "#05000a",
-  minimal: "#000000",
-  glass: "#0a0614",
-  anime: "#140a14",
-  workspace: "#0f111a",
-};
-
-const ACCENT: Record<string, string> = {
-  purple: "#c084fc", blue: "#60a5fa", cyan: "#22d3ee", pink: "#f472b6",
-};
-
-const GLOW: Record<string, string> = {
-  purple: "rgba(192,132,252,0.4)", blue: "rgba(96,165,250,0.4)",
-  cyan: "rgba(34,211,238,0.4)", pink: "rgba(244,114,182,0.4)",
-};
 
 export function WallpaperPreview({ scale = 1 }: { scale?: number }) {
   const { tasks, habits, wallpaper, streakCount, userName, level, xp } = useStore();
@@ -46,8 +30,7 @@ export function WallpaperPreview({ scale = 1 }: { scale?: number }) {
   const totalToday = tasks.filter(t => t.dueDate === today || !t.dueDate).length;
   const progressPct = totalToday > 0 ? Math.round((completedToday / totalToday) * 100) : 0;
 
-  const accent = ACCENT[wallpaper.accent] || ACCENT.purple;
-  const glow = GLOW[wallpaper.accent] || GLOW.purple;
+  const { hex: accent } = getAccentDetails(wallpaper.accent, wallpaper.customAccentColor);
   
   const now = new Date();
   const hours12 = now.getHours() % 12 || 12;
@@ -69,7 +52,7 @@ export function WallpaperPreview({ scale = 1 }: { scale?: number }) {
       className="relative w-full overflow-hidden"
       style={{
         aspectRatio: "16/10",
-        background: "#030303",
+        background: getThemeBg(wallpaper.theme, wallpaper.customThemeBackground),
         fontFamily, color: "#fff",
         opacity: wallpaper.opacity,
         containerType: "inline-size"

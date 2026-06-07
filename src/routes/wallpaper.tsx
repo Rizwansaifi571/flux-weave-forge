@@ -11,22 +11,9 @@ import { toPng } from "html-to-image";
 
 export const Route = createFileRoute("/wallpaper")({ component: WallpaperPage });
 
-// --- Constants ---
-const THEMES: readonly { id: WallpaperConfig["theme"]; label: string; preview: string; gradient: string }[] = [
-  { id: "neon", label: "Neon Productivity", preview: "linear-gradient(135deg,#0b0524,#1a0a3a,#001a3a)", gradient: "from-purple-900/40 via-blue-900/20 to-cyan-900/40" },
-  { id: "cyberpunk", label: "Cyberpunk", preview: "linear-gradient(135deg,#0a0014,#1a0033,#ff006e)", gradient: "from-pink-900/40 via-purple-900/20 to-black" },
-  { id: "minimal", label: "Minimal Dark", preview: "linear-gradient(135deg,#0a0a0f,#14141f)", gradient: "from-slate-900 to-zinc-900" },
-  { id: "glass", label: "Glassmorphism", preview: "linear-gradient(135deg,#1a1a2e,#2d1b69,#6a3093)", gradient: "from-indigo-900/40 via-purple-800/30 to-fuchsia-900/40" },
-  { id: "anime", label: "Anime", preview: "linear-gradient(135deg,#ff9a9e,#fad0c4,#a18cd1)", gradient: "from-rose-400/30 via-orange-300/20 to-purple-400/30" },
-  { id: "workspace", label: "Workspace", preview: "linear-gradient(135deg,#1e293b,#334155)", gradient: "from-slate-800 to-slate-700" },
-] as const;
+import { WALLPAPER_THEMES, WALLPAPER_ACCENTS } from "@/lib/wallpaper-themes";
 
-const ACCENTS: readonly { id: WallpaperConfig["accent"]; color: string; ringColor: string }[] = [
-  { id: "purple", color: "#c084fc", ringColor: "ring-purple-400" },
-  { id: "blue", color: "#60a5fa", ringColor: "ring-blue-400" },
-  { id: "cyan", color: "#22d3ee", ringColor: "ring-cyan-400" },
-  { id: "pink", color: "#f472b6", ringColor: "ring-pink-400" },
-] as const;
+// --- Constants ---
 
 const FONTS: readonly { id: WallpaperConfig["font"]; label: string; className: string }[] = [
   { id: "geist", label: "Geist", className: "font-sans" },
@@ -65,7 +52,7 @@ const Toggle = ({ label, value, onChange, disabled = false }: { label: string; v
   );
 };
 
-const ThemeButton = ({ theme, isActive, onClick }: { theme: typeof THEMES[number]; isActive: boolean; onClick: () => void }) => (
+const ThemeButton = ({ theme, isActive, onClick }: { theme: typeof WALLPAPER_THEMES[number]; isActive: boolean; onClick: () => void }) => (
   <motion.button
     whileHover={{ y: -2, scale: 1.02 }}
     whileTap={{ scale: 0.98 }}
@@ -86,17 +73,19 @@ const ThemeButton = ({ theme, isActive, onClick }: { theme: typeof THEMES[number
   </motion.button>
 );
 
-const AccentButton = ({ accent, isActive, onClick }: { accent: typeof ACCENTS[number]; isActive: boolean; onClick: () => void }) => (
+const AccentButton = ({ accent, isActive, onClick }: { accent: typeof WALLPAPER_ACCENTS[number]; isActive: boolean; onClick: () => void }) => (
   <button
     onClick={onClick}
     className={`
       h-10 w-10 rounded-full transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-white/50
       ${isActive ? `ring-2 ${accent.ringColor} scale-110 shadow-lg` : "scale-100 hover:scale-105"}
     `}
-    style={{ background: accent.color, boxShadow: isActive ? `0 0 20px ${accent.color}80` : undefined }}
+    style={{ background: accent.color.startsWith("var") ? "linear-gradient(135deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f)" : accent.color, boxShadow: isActive && !accent.color.startsWith("var") ? `0 0 20px ${accent.color}80` : undefined }}
     aria-label={`Set ${accent.id} accent color`}
     aria-pressed={isActive}
-  />
+  >
+    {accent.id === "custom" && <Palette className="h-4 w-4 m-auto text-white mix-blend-difference" />}
+  </button>
 );
 
 // --- Main Component ---
@@ -248,7 +237,7 @@ function WallpaperPage() {
                 <h3 className="font-semibold">Themes</h3>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                {THEMES.map((theme) => (
+                {WALLPAPER_THEMES.map((theme) => (
                   <ThemeButton
                     key={theme.id}
                     theme={theme}
@@ -257,6 +246,17 @@ function WallpaperPage() {
                   />
                 ))}
               </div>
+              {wallpaper.theme === "custom" && (
+                <div className="mt-3 flex items-center gap-3 animate-in fade-in slide-in-from-top-2">
+                  <label className="text-sm font-medium text-muted-foreground whitespace-nowrap">Background Color:</label>
+                  <input 
+                    type="color" 
+                    value={wallpaper.customThemeBackground || "#000000"} 
+                    onChange={(e) => setWallpaper({ customThemeBackground: e.target.value })}
+                    className="w-full h-8 rounded cursor-pointer border-0 p-0"
+                  />
+                </div>
+              )}
             </GlassCard>
           </div>
 
@@ -269,7 +269,7 @@ function WallpaperPage() {
                 <h3 className="font-semibold">Accent Color</h3>
               </div>
               <div className="flex gap-3 flex-wrap">
-                {ACCENTS.map((accent) => (
+                {WALLPAPER_ACCENTS.map((accent) => (
                   <AccentButton
                     key={accent.id}
                     accent={accent}
@@ -278,6 +278,17 @@ function WallpaperPage() {
                   />
                 ))}
               </div>
+              {wallpaper.accent === "custom" && (
+                <div className="mt-3 flex items-center gap-3 animate-in fade-in slide-in-from-top-2">
+                  <label className="text-sm font-medium text-muted-foreground whitespace-nowrap">Accent Color:</label>
+                  <input 
+                    type="color" 
+                    value={wallpaper.customAccentColor || "#c084fc"} 
+                    onChange={(e) => setWallpaper({ customAccentColor: e.target.value })}
+                    className="w-full h-8 rounded cursor-pointer border-0 p-0"
+                  />
+                </div>
+              )}
             </GlassCard>
 
             {/* Layout & Widgets */}
