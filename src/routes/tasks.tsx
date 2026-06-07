@@ -188,6 +188,12 @@ function clampMinutes(value: number, min = 15, max = 240) {
 function extractTargetDays(command: string, fallback: number) {
   const lower = command.toLowerCase();
 
+  // "today" or "complete today" → 1 day
+  if (/\btoday\b/.test(lower)) return 1;
+
+  // "tomorrow" → 2 days (today + tomorrow)
+  if (/\btomorrow\b/.test(lower)) return 2;
+
   const daysMatch = lower.match(/(\d+)\s*(days?|day)\b/);
   if (daysMatch) return Math.max(1, Number(daysMatch[1]));
 
@@ -293,6 +299,65 @@ function calculateCompletionStreak(tasks: Task[], referenceDate: string) {
   return streak;
 }
 
+/**
+ * Detect & parse a YouTube playlist paste.
+ * YouTube format per video:
+ *   <number>           e.g. "54"
+ *   true|false          checkbox state
+ *   <duration>          e.g. "22:22" or "1:21:46"
+ *   Now playing         status line
+ *   <actual title>      the real video title
+ *   (blank line)
+ */
+function parseYouTubePaste(lines: string[]): PlannedItem[] | null {
+  // Heuristic: at least 3 occurrences of the YouTube metadata pattern
+  const durationPattern = /^\d{1,2}:\d{2}(:\d{2})?$/;
+  const metadataLines = lines.filter(
+    (l) => /^(true|false)$/i.test(l) || durationPattern.test(l) || /^now playing$/i.test(l)
+  );
+  if (metadataLines.length < 3) return null;
+
+  const items: PlannedItem[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Try to find the pattern: number → true/false → duration → "Now playing" → title
+    if (/^\d+$/.test(line) && i + 4 < lines.length) {
+      const boolLine = lines[i + 1];
+      const durationLine = lines[i + 2];
+      const statusLine = lines[i + 3];
+      const titleLine = lines[i + 4];
+
+      if (
+        /^(true|false)$/i.test(boolLine) &&
+        durationPattern.test(durationLine) &&
+        /^now playing$/i.test(statusLine) &&
+        titleLine.length > 3
+      ) {
+        // Parse duration like "22:22" or "1:21:46"
+        const parts = durationLine.split(":").map(Number);
+        let totalMinutes = 0;
+        if (parts.length === 3) {
+          totalMinutes = parts[0] * 60 + parts[1] + Math.ceil(parts[2] / 60);
+        } else if (parts.length === 2) {
+          totalMinutes = parts[0] + Math.ceil(parts[1] / 60);
+        }
+        totalMinutes = Math.max(5, totalMinutes);
+
+        items.push({
+          title: titleLine,
+          durationMinutes: totalMinutes,
+        });
+        i += 5; // skip past this block
+        continue;
+      }
+    }
+    i++;
+  }
+  return items.length > 0 ? items : null;
+}
+
 function parsePastedList(command: string): PlannedItem[] {
   const lines = command
     .split(/\r?\n/)
@@ -301,15 +366,30 @@ function parsePastedList(command: string): PlannedItem[] {
 
   if (lines.length === 0) return [];
 
+  // First try YouTube playlist format detection
+  const ytItems = parseYouTubePaste(lines);
+  if (ytItems) return ytItems;
+
+  // Fallback: bullet-list or plain-list parsing
   const bulletLike = lines.filter((line) =>
     /^(?:[-*•]|\d+[.)])\s+/.test(line)
   );
 
   const candidateLines = bulletLike.length > 0 ? bulletLike : lines;
 
+  // Filter out YouTube-like garbage even in fallback mode
+  const junkPattern = /^(true|false|now playing|\d{1,2}:\d{2}(:\d{2})?)$/i;
+
   const items = candidateLines
     .map((line) => cleanLineItem(line))
-    .filter((line) => line.length > 2 && !/^https?:\/\//i.test(line))
+    .filter(
+      (line) =>
+        line.length > 3 &&
+        !/^https?:\/\//i.test(line) &&
+        !junkPattern.test(line) &&
+        !/^\d+$/.test(line) &&
+        !/^want\s+to\s+complet/i.test(line)
+    )
     .map((line) => ({
       title: line,
       durationMinutes: estimateItemMinutes(line),
@@ -371,6 +451,8 @@ function buildPlanFromItems(params: {
     preferredStudyHours,
   } = params;
 
+  void preferredStudyHours; // kept for API compat
+
   if (items.length === 0) return null;
 
   const buckets = bucketItemsByMinutes(items, targetDays);
@@ -399,29 +481,23 @@ function buildPlanFromItems(params: {
   };
 
   const startDateObj = new Date(`${startDate}T00:00:00`);
-  const startMinutes = toTimeMinutes(preferredStudyHours?.start) ?? 540;
-  const gapMinutes = 10;
 
   const tasks: TaskInput[] = buckets.flatMap((bucket, dayIndex) => {
     const dueDate = formatLocalDate(shiftDate(startDateObj, dayIndex));
-    let cursorMinutes = startMinutes;
 
     return bucket.map((item) => {
       const focusMinutes = clampMinutes(item.durationMinutes, 5, 240);
-      const dueTime = minutesToClock(cursorMinutes);
 
       const draft: TaskInput = {
         title: item.title,
         description: item.note,
         priority: "medium",
         dueDate,
-        dueTime,
         tags: [tag],
         focusMinutes,
         category,
       };
 
-      cursorMinutes += focusMinutes + gapMinutes;
       return draft;
     });
   });
@@ -1129,7 +1205,6 @@ const rescheduleOverdueTasks = useCallback((strategy: "extend_deadline" | "incre
         a.createdAt.localeCompare(b.createdAt)
     );
 
-  const startMinutes = toTimeMinutes(lifeContext.preferredStudyHours.start) ?? 540;
   const totalMinutes = allTasksToReschedule.reduce(
     (sum, task) => sum + clampMinutes(task.focusMinutes || 30, 15, 240),
     0
@@ -2117,10 +2192,7 @@ const rescheduleOverdueTasks = useCallback((strategy: "extend_deadline" | "incre
 
                     <button
                       type="button"
-                      onClick={() => {
-                        const result = rescheduleOverdueTasks();
-                        addAssistantMessage({ role: "ai", text: result.summary });
-                      }}
+                      onClick={() => setShowReschedulePrompt(true)}
                       className="inline-flex items-center gap-2 rounded-lg border border-neon-pink/30 bg-neon-pink/10 px-3 py-1.5 text-xs font-medium text-neon-pink"
                     >
                       <RefreshCw className="h-3.5 w-3.5" />
