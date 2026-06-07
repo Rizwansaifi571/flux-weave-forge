@@ -1237,9 +1237,9 @@ const rescheduleOverdueTasks = useCallback((strategy: "extend_deadline" | "incre
 
       const bucket = dayBuckets[scheduledIndex];
       const dueDate = formatLocalDate(bucket.date);
-      const dueTime = minutesToClock(startMinutes + bucket.usedMinutes);
-
-      updateTask(task.id, { dueDate, dueTime });
+      // Do not force a dueTime. This avoids tasks scheduled for today becoming 
+      // immediately overdue if the calculated time is in the past.
+      updateTask(task.id, { dueDate, dueTime: undefined });
 
       bucket.usedMinutes += effort;
       progressMinutes += effort;
