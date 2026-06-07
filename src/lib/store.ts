@@ -157,9 +157,17 @@ export interface WallpaperConfig {
   theme: "cyberpunk" | "minimal" | "neon" | "glass" | "anime" | "workspace";
   opacity: number;
   showTasks: boolean;
+  maxTasksCount: number;
+  showTaskCategory?: boolean;
+  showTaskTime?: boolean;
+  showTaskDate?: boolean;
+  showTaskPriority?: boolean;
   showStreak: boolean;
   showQuote: boolean;
   showStats: boolean;
+  showClock?: boolean;
+  showDate?: boolean;
+  showDailyHabits?: boolean;
   accent: "purple" | "blue" | "cyan" | "pink";
   font: "geist" | "mono" | "serif";
 }
@@ -345,9 +353,17 @@ const getInitialState = () => ({
     theme: "neon" as const,
     opacity: 0.85,
     showTasks: true,
+    maxTasksCount: 3,
+    showTaskCategory: false,
+    showTaskTime: true,
+    showTaskDate: false,
+    showTaskPriority: true,
     showStreak: true,
     showQuote: true,
     showStats: true,
+    showClock: true,
+    showDate: true,
+    showDailyHabits: true,
     accent: "purple" as const,
     font: "geist" as const,
   },

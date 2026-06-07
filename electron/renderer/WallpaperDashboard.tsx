@@ -1,269 +1,403 @@
-import React, { useEffect, useState } from "react";
-import { useStore, motivationalQuotes } from "@/lib/store";
+import React, { useEffect, useState, useMemo } from "react";
+import { useStore } from "@/lib/store";
 import { formatLocalDate } from "@/lib/date";
 
-const THEME_STYLES: Record<string, React.CSSProperties> = {
-  neon: { background: "#06060a" },
-  cyberpunk: { background: "#05000a" },
-  minimal: { background: "#000000" },
-  glass: { background: "#0a0614" },
-  anime: { background: "#140a14" },
-  workspace: { background: "#0f111a" },
+// ─── Accent palette ──────────────────────────────────────────────────────────
+const ACCENT_MAP: Record<string, { hex: string; glow: string; rgb: string }> = {
+  purple: { hex: "#8a2be2", glow: "rgba(138,43,226,0.35)", rgb: "138,43,226" },
+  blue:   { hex: "#007aff", glow: "rgba(0,122,255,0.35)",  rgb: "0,122,255"  },
+  cyan:   { hex: "#00e5cc", glow: "rgba(0,229,204,0.35)",   rgb: "0,229,204"   },
+  pink:   { hex: "#ff2a6d", glow: "rgba(255,42,109,0.35)", rgb: "255,42,109" },
 };
 
-const ACCENT: Record<string, string> = {
-  purple: "#c084fc", blue: "#60a5fa", cyan: "#22d3ee", pink: "#f472b6",
+// ─── Task sanitisation ────────────────────────────────────────────────────────
+function isValidTaskTitle(title: unknown): boolean {
+  if (typeof title !== "string") return false;
+  const t = title.trim();
+  if (!t || t === "true" || t === "false" || t === "null" || t === "undefined") return false;
+  if (/^now playing$/i.test(t)) return false;
+  if (/^\d+:\d{2}(:\d{2})?$/.test(t)) return false;
+  if (/^\d+$/.test(t)) return false;
+  if (t.length < 3) return false;
+  return true;
+}
+
+// ─── Inline SVG icons ─────────────────────────────────────────────────────────
+const CheckIcon = ({ size = 20, color = "#fff" }: { size?: number; color?: string }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={3} strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="20 6 9 17 4 12" />
+  </svg>
+);
+
+const FlameIcon = () => (
+  <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="#ff9040" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 2c0 6-6 8-6 14a6 6 0 0 0 12 0c0-6-3-10-3-14" />
+    <path d="M12 12c0 3-2 4-2 7a2 2 0 0 0 4 0c0-3-2-4-2-7" />
+  </svg>
+);
+
+const TargetIcon = () => (
+  <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="12" r="10" />
+    <circle cx="12" cy="12" r="6" />
+    <circle cx="12" cy="12" r="2" />
+  </svg>
+);
+
+// ─── CSS animation keyframes ──────────────────────────────────────────────────
+const GLOBAL_CSS = `
+  @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body, #root { width: 100%; height: 100%; overflow: hidden; background: #000; }
+
+  @keyframes float {
+    0%   { transform: translate(0,0) scale(1); }
+    50%  { transform: translate(2vw,-2vh) scale(1.02); }
+    100% { transform: translate(0,0) scale(1); }
+  }
+  @keyframes slideUp {
+    0%   { opacity: 0; transform: translateY(20px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes fadeIn {
+    0%   { opacity: 0; }
+    100% { opacity: 1; }
+  }
+  .task-item {
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .task-item:hover {
+    transform: translateX(10px);
+    background: rgba(255,255,255,0.05);
+  }
+`;
+
+// ─── Circular Progress SVG Component ──────────────────────────────────────────
+const CircularProgress = ({ pct, accent, size = 120, strokeWidth = 8 }: { pct: number, accent: string, size?: number, strokeWidth?: number }) => {
+  const radius = (size - strokeWidth) / 2;
+  const circumference = radius * 2 * Math.PI;
+  const offset = circumference - (pct / 100) * circumference;
+
+  return (
+    <div style={{ position: "relative", width: size, height: size, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
+        <circle
+          cx={size / 2} cy={size / 2} r={radius}
+          fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth={strokeWidth}
+        />
+        <circle
+          cx={size / 2} cy={size / 2} r={radius}
+          fill="none" stroke={accent} strokeWidth={strokeWidth}
+          strokeDasharray={circumference} strokeDashoffset={offset}
+          strokeLinecap="round"
+          style={{ transition: "stroke-dashoffset 1.5s cubic-bezier(0.16, 1, 0.3, 1)" }}
+        />
+      </svg>
+      <div style={{
+        position: "absolute",
+        fontSize: size * 0.22 + "px",
+        fontWeight: 700,
+        letterSpacing: "-0.05em",
+        fontFamily: "'Outfit', sans-serif"
+      }}>
+        {pct}<span style={{ fontSize: "0.6em", opacity: 0.5 }}>%</span>
+      </div>
+    </div>
+  );
 };
 
-const GLOW: Record<string, string> = {
-  purple: "rgba(192,132,252,0.4)", blue: "rgba(96,165,250,0.4)",
-  cyan: "rgba(34,211,238,0.4)", pink: "rgba(244,114,182,0.4)",
-};
-
+// ─── Main Component ───────────────────────────────────────────────────────────
 export function WallpaperDashboard() {
   const store = useStore();
   const [time, setTime] = useState(new Date());
+  const [isHydrated, setIsHydrated] = useState(false);
 
   useEffect(() => {
     if ((window as any).electronAPI) {
       (window as any).electronAPI.getInitialState().then((s: any) => {
         if (s) useStore.setState(s);
+        setIsHydrated(true);
       });
       (window as any).electronAPI.onSyncState((s: any) => {
         if (s) useStore.setState(s);
+        setIsHydrated(true);
       });
+    } else {
+      setIsHydrated(true);
     }
     const t = setInterval(() => setTime(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
 
   const cfg = store.wallpaper;
-  const accent = ACCENT[cfg.accent] || ACCENT.purple;
-  const glow = GLOW[cfg.accent] || GLOW.purple;
+  const ac = ACCENT_MAP[cfg.accent] || ACCENT_MAP.purple;
   const todayStr = formatLocalDate(new Date());
-  const tasks = store.tasks.filter(t => !t.completed && (t.dueDate === todayStr || !t.dueDate)).slice(0, 5);
-  const habits = store.habits.slice(0, 5);
-  const quote = motivationalQuotes[new Date().getDate() % motivationalQuotes.length];
-  const completedToday = store.tasks.filter(t => t.completed && t.completedAt && t.completedAt.startsWith(todayStr)).length;
-  const totalToday = store.tasks.filter(t => t.dueDate === todayStr || !t.dueDate).length;
+
+  // Time logic
+  const hours12  = time.getHours() % 12 || 12;
+  const mins     = String(time.getMinutes()).padStart(2, "0");
+  const timeHHMM = `${hours12}:${mins}`;
+
+  // Date
+  const dateStr = time.toLocaleDateString('en-US', {
+    weekday: "long", month: "long", day: "numeric"
+  });
+
+  // Calculate actual total remaining (before slice)
+  const remainingTasksCount = useMemo(() => {
+    return store.tasks.filter((t) => !t.completed && isValidTaskTitle(t.title) && (t.dueDate === todayStr || !t.dueDate)).length;
+  }, [store.tasks, todayStr]);
+
+  const {
+    maxTasksCount = 3,
+    showTaskCategory = false,
+    showTaskTime = true,
+    showTaskPriority = true,
+    showClock = true,
+    showDate = true,
+    showDailyHabits = true,
+    showTasks = true,
+    showStreak = true,
+    showStats = true,
+    showTaskDate = false,
+  } = cfg;
+
+  // Tasks
+  const tasks = useMemo(() => {
+    return store.tasks
+      .filter((t) => !t.completed && isValidTaskTitle(t.title) && (t.dueDate === todayStr || !t.dueDate))
+      .slice(0, maxTasksCount);
+  }, [store.tasks, todayStr, maxTasksCount]);
+
+  const habits = store.habits.slice(0, 5); // Habits can be slightly more since they are grid items
+
+  // Stats
+  const completedToday = store.tasks.filter((t) => t.completed && t.completedAt && t.completedAt.startsWith(todayStr)).length;
+  const totalToday = store.tasks.filter((t) => t.dueDate === todayStr || !t.dueDate).length;
   const progressPct = totalToday > 0 ? Math.round((completedToday / totalToday) * 100) : 0;
 
-  const timeStr = time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  const dateStr = time.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
-  const greeting = (() => {
-    const h = time.getHours();
-    if (h < 12) return "Good morning";
-    if (h < 17) return "Good afternoon";
-    return "Good evening";
-  })();
-
-  const fontFamily = cfg.font === "mono" ? "'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace"
-    : cfg.font === "serif" ? "Georgia, 'Times New Roman', serif"
-    : "'Inter', 'Segoe UI', -apple-system, sans-serif";
-
-  // Shared glassmorphism card style
-  const glassCard: React.CSSProperties = {
-    background: "linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.005) 100%)",
-    backdropFilter: "blur(40px) saturate(150%)",
-    border: "1px solid rgba(255,255,255,0.08)",
-    borderRadius: "1.5vw",
-    padding: "2vw",
-    boxShadow: "0 30px 60px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1)",
-  };
+  if (!isHydrated) {
+    return <div style={{ width: "100vw", height: "100vh", background: "#030303" }} />;
+  }
 
   return (
     <div style={{
       width: "100vw", height: "100vh", overflow: "hidden",
-      fontFamily, color: "#fff", position: "relative",
-      ...THEME_STYLES[cfg.theme] || THEME_STYLES.neon,
+      fontFamily: "'Outfit', sans-serif", color: "#fff",
+      position: "relative",
+      background: "#030303",
+      WebkitFontSmoothing: "antialiased", MozOsxFontSmoothing: "grayscale",
     }}>
-      <style>{`
-        @keyframes slow-spin {
-          0% { transform: rotate(0deg) scale(1); }
-          50% { transform: rotate(180deg) scale(1.1); }
-          100% { transform: rotate(360deg) scale(1); }
-        }
-        @keyframes float-1 {
-          0% { transform: translate(0, 0); }
-          33% { transform: translate(3vw, -4vh); }
-          66% { transform: translate(-2vw, 2vh); }
-          100% { transform: translate(0, 0); }
-        }
-        @keyframes float-2 {
-          0% { transform: translate(0, 0); }
-          33% { transform: translate(-4vw, 3vh); }
-          66% { transform: translate(2vw, -3vh); }
-          100% { transform: translate(0, 0); }
-        }
-        .orb-1 {
-          position: absolute; top: -20%; left: -10%; width: 60vw; height: 60vw; border-radius: 50%;
-          background: radial-gradient(circle, ${glow}, transparent 60%);
-          filter: blur(80px); opacity: 0.7; mix-blend-mode: screen; pointer-events: none;
-          animation: slow-spin 40s linear infinite, float-1 20s ease-in-out infinite;
-        }
-        .orb-2 {
-          position: absolute; bottom: -30%; right: -15%; width: 70vw; height: 70vw; border-radius: 50%;
-          background: radial-gradient(circle, ${accent}40, transparent 65%);
-          filter: blur(100px); opacity: 0.6; mix-blend-mode: screen; pointer-events: none;
-          animation: slow-spin 50s reverse linear infinite, float-2 25s ease-in-out infinite;
-        }
-        .orb-3 {
-          position: absolute; top: 30%; left: 40%; width: 40vw; height: 40vw; border-radius: 50%;
-          background: radial-gradient(circle, rgba(255,255,255,0.03), transparent 70%);
-          filter: blur(60px); pointer-events: none;
-        }
-      `}</style>
-      
-      {/* Dynamic Ambient Background */}
-      <div className="orb-1" />
-      <div className="orb-2" />
-      <div className="orb-3" />
-      
-      {/* Subtle Grid overlay for texture */}
+      <style>{GLOBAL_CSS}</style>
+
+      {/* ── Background: Pure, Clean, Premium Glow ──────────────────────── */}
       <div style={{
-        position: "absolute", inset: 0, opacity: 0.04, pointerEvents: "none",
-        backgroundImage: "linear-gradient(rgba(255,255,255,.5) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.5) 1px, transparent 1px)",
-        backgroundSize: "3vw 3vw",
-        maskImage: "radial-gradient(ellipse at center, transparent 20%, black 100%)",
-        WebkitMaskImage: "radial-gradient(ellipse at center, transparent 20%, black 100%)",
+        position: "absolute", top: "-20%", right: "-10%",
+        width: "70vw", height: "70vw", borderRadius: "50%",
+        background: `radial-gradient(circle, ${ac.hex}22 0%, transparent 60%)`,
+        pointerEvents: "none", mixBlendMode: "screen",
+        animation: "float 20s ease-in-out infinite",
+      }} />
+      <div style={{
+        position: "absolute", bottom: "-30%", left: "-10%",
+        width: "60vw", height: "60vw", borderRadius: "50%",
+        background: `radial-gradient(circle, ${ac.hex}15 0%, transparent 60%)`,
+        pointerEvents: "none", mixBlendMode: "screen",
       }} />
 
-      {/* Main UI Container */}
+      {/* ── Top Header Bar ─────────────────────────────────────────────── */}
       <div style={{
-        position: "relative", zIndex: 1, width: "100%", height: "100%",
-        display: "flex", justifyContent: "space-between", alignItems: "center",
-        padding: "5vh 4vw", boxSizing: "border-box", opacity: cfg.opacity,
+        position: "absolute", top: 0, left: 0, right: 0,
+        padding: "40px 60px",
+        display: "flex", justifyContent: "space-between", alignItems: "flex-start",
+        zIndex: 10,
+        animation: "fadeIn 1s ease",
       }}>
-        
-        {/* Left Column: Greeting & Tasks */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "3vh", width: "24vw" }}>
-          <div>
-            <div style={{ fontSize: "1.2vw", opacity: 0.6, textTransform: "uppercase", letterSpacing: "0.2em", fontWeight: 500, marginBottom: "1vh" }}>
+        {/* Left: Clock & Date */}
+        <div>
+          {showClock && (
+            <div style={{ fontSize: "64px", fontWeight: 800, letterSpacing: "-0.04em", lineHeight: 0.9 }}>
+              {timeHHMM}
+            </div>
+          )}
+          {showDate && (
+            <div style={{ fontSize: "20px", fontWeight: 400, opacity: 0.6, marginTop: "8px", letterSpacing: "-0.01em" }}>
               {dateStr}
             </div>
-            <div style={{ fontSize: "2.5vw", fontWeight: 300, lineHeight: 1.2 }}>
-              {greeting},<br/>
-              <span style={{ color: accent, fontWeight: 600 }}>{store.userName}</span>
-              <span style={{ marginLeft: "0.5vw", fontSize: "2vw" }}>✨</span>
-            </div>
+          )}
+        </div>
+
+        {/* Right: Gamification Status */}
+        {(showStreak || showStats) && (
+          <div style={{ display: "flex", gap: "24px", alignItems: "center" }}>
+            {/* Streak */}
+            {showStreak && (
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <FlameIcon />
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                  <span style={{ fontSize: "12px", opacity: 0.5, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase" }}>Streak</span>
+                  <span style={{ fontSize: "24px", fontWeight: 700, lineHeight: 1 }}>{store.streakCount ?? 0}</span>
+                </div>
+              </div>
+            )}
+            
+            {/* Divider */}
+            {showStreak && showStats && (
+              <div style={{ width: "2px", height: "30px", background: "rgba(255,255,255,0.1)" }} />
+            )}
+            
+            {/* XP & Level */}
+            {showStats && (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+                <span style={{ fontSize: "12px", color: ac.hex, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" }}>
+                  Level {store.level ?? 1}
+                </span>
+                <span style={{ fontSize: "24px", fontWeight: 700, lineHeight: 1 }}>
+                  {(store.xp ?? 0).toLocaleString()} <span style={{ fontSize: "14px", opacity: 0.5 }}>XP</span>
+                </span>
+              </div>
+            )}
           </div>
-
-          {cfg.showTasks && (
-            <div style={glassCard}>
-              <div style={{ fontSize: "1.1vw", opacity: 0.5, textTransform: "uppercase", letterSpacing: "0.15em", marginBottom: "1.5vh", display: "flex", alignItems: "center", gap: "0.5vw" }}>
-                <span style={{ width: "0.4vw", height: "0.4vw", borderRadius: "50%", background: accent, boxShadow: `0 0 10px ${accent}` }} />
-                Today's Focus
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: "1.2vh" }}>
-                {tasks.length === 0 ? (
-                  <div style={{ opacity: 0.4, fontSize: "1vw", padding: "1vh 0" }}>All clear. Great job.</div>
-                ) : tasks.map((t) => (
-                  <div key={t.id} style={{ display: "flex", alignItems: "center", gap: "0.8vw" }}>
-                    <div style={{ width: "1vw", height: "1vw", borderRadius: "50%", border: `2px solid ${accent}60`, flexShrink: 0 }} />
-                    <span style={{ fontSize: "1.05vw", opacity: 0.9, lineHeight: 1.3 }}>{t.title}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Center Column: Huge Time Display */}
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", position: "relative", top: "-5vh" }}>
-          <div style={{
-            fontSize: "12vw", fontWeight: 700, letterSpacing: "-0.04em",
-            lineHeight: 1, textShadow: `0 20px 60px ${accent}40`,
-            background: `linear-gradient(180deg, #ffffff 30%, rgba(255,255,255,0.4))`,
-            WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
-          }}>
-            {timeStr}
-          </div>
-          {cfg.showQuote && (
-            <div style={{
-              fontSize: "1.1vw", opacity: 0.5, fontStyle: "italic",
-              fontWeight: 300, letterSpacing: "0.05em", marginTop: "2vh",
-              textAlign: "center", maxWidth: "35vw"
-            }}>
-              "{quote}"
-            </div>
-          )}
-        </div>
-
-        {/* Right Column: Status & Habits */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "3vh", width: "22vw", alignItems: "flex-end" }}>
-          
-          {cfg.showStats && (
-            <div style={{ ...glassCard, width: "100%", textAlign: "right" }}>
-              <div style={{ fontSize: "0.9vw", opacity: 0.5, textTransform: "uppercase", letterSpacing: "0.15em", marginBottom: "0.5vh" }}>
-                Operator Level {store.level}
-              </div>
-              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "flex-end", gap: "0.4vw", marginBottom: "1.5vh" }}>
-                <span style={{
-                  fontSize: "3vw", fontWeight: 700,
-                  background: `linear-gradient(135deg, #fff, ${accent})`,
-                  WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
-                  textShadow: `0 0 30px ${accent}40`
-                }}>{store.xp.toLocaleString()}</span>
-                <span style={{ fontSize: "1.1vw", opacity: 0.6, fontWeight: 500 }}>FP</span>
-              </div>
-              
-              {cfg.showStreak && (
-                <div style={{
-                  display: "inline-flex", alignItems: "center", gap: "0.6vw",
-                  background: "rgba(255,255,255,0.05)", borderRadius: "1vw", padding: "0.6vw 1vw",
-                  border: "1px solid rgba(255,255,255,0.05)", marginBottom: "2vh"
-                }}>
-                  <span style={{ fontSize: "1.2vw", filter: "drop-shadow(0 0 10px rgba(255,100,0,0.5))" }}>🔥</span>
-                  <span style={{ fontSize: "1.1vw", fontWeight: 600 }}>{store.streakCount} Day Streak</span>
-                </div>
-              )}
-
-              {/* Minimal Progress Bar */}
-              <div>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.8vw", opacity: 0.5, marginBottom: "0.5vh" }}>
-                  <span>Daily Progress</span>
-                  <span>{progressPct}%</span>
-                </div>
-                <div style={{ width: "100%", height: "0.3vw", background: "rgba(255,255,255,0.06)", borderRadius: "1vw", overflow: "hidden" }}>
-                  <div style={{
-                    width: `${progressPct}%`, height: "100%",
-                    background: `linear-gradient(90deg, ${accent}, #fff)`,
-                    borderRadius: "1vw", boxShadow: `0 0 10px ${accent}`
-                  }} />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {cfg.showTasks && (
-            <div style={{ ...glassCard, width: "100%" }}>
-              <div style={{ fontSize: "1.1vw", opacity: 0.5, textTransform: "uppercase", letterSpacing: "0.15em", marginBottom: "1.5vh", display: "flex", alignItems: "center", gap: "0.5vw" }}>
-                <span style={{ width: "0.4vw", height: "0.4vw", borderRadius: "50%", background: accent, boxShadow: `0 0 10px ${accent}` }} />
-                Daily Habits
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: "1vh" }}>
-                {habits.map((h) => {
-                  const done = h.history[todayStr];
-                  return (
-                    <div key={h.id} style={{
-                      display: "flex", alignItems: "center", gap: "0.8vw",
-                      padding: "0.7vw 1vw", borderRadius: "1vw",
-                      background: done ? `linear-gradient(90deg, ${accent}15, transparent)` : "rgba(255,255,255,0.02)",
-                      border: `1px solid ${done ? accent + "30" : "rgba(255,255,255,0.03)"}`,
-                      borderLeft: `2px solid ${done ? accent : "transparent"}`,
-                      transition: "all 0.3s ease"
-                    }}>
-                      <span style={{ fontSize: "1.3vw", filter: done ? `drop-shadow(0 0 10px ${accent}40)` : "none" }}>{h.emoji}</span>
-                      <span style={{ fontSize: "1.05vw", opacity: done ? 1 : 0.6, fontWeight: done ? 500 : 400 }}>{h.name}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-        </div>
+        )}
       </div>
+
+      {/* ── Main Content Grid ──────────────────────────────────────────── */}
+      <div style={{
+        position: "absolute", top: "160px", left: "60px", right: "60px", bottom: "40px",
+        display: "grid",
+        gridTemplateColumns: showDailyHabits && showTasks ? "1.2fr 1fr" : "1fr",
+        gap: "80px",
+        zIndex: 10,
+        justifyContent: "center",
+      }}>
+        
+        {/* ── Left Column: Today's Mission (Tasks) ──────────────────────── */}
+        {showTasks && (
+          <div style={{ display: "flex", flexDirection: "column", maxWidth: showDailyHabits ? "none" : "800px", margin: showDailyHabits ? "0" : "0 auto", width: "100%" }}>
+            
+            <div style={{ display: "flex", alignItems: "center", gap: "16px", marginBottom: "32px", animation: "slideUp 0.8s ease both" }}>
+              <CircularProgress pct={progressPct} accent={ac.hex} size={70} strokeWidth={6} />
+              <div>
+                <h1 style={{ fontSize: "36px", fontWeight: 800, letterSpacing: "-0.03em" }}>Today's Mission</h1>
+                <p style={{ fontSize: "18px", opacity: 0.5, fontWeight: 400 }}>
+                  {remainingTasksCount === 0 ? "You're all caught up for today." : `You have ${remainingTasksCount} tasks remaining.`}
+                </p>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "16px", overflow: "hidden" }}>
+              {tasks.map((t, i) => (
+                <div key={t.id} className="task-item" style={{
+                  display: "flex", alignItems: "center", gap: "20px",
+                  padding: "20px 24px",
+                  background: "rgba(255,255,255,0.03)",
+                  borderRadius: "16px",
+                  border: "1px solid rgba(255,255,255,0.06)",
+                  animation: `slideUp ${0.8 + (i * 0.1)}s ease both`,
+                }}>
+                  <div style={{
+                    width: "28px", height: "28px", borderRadius: "8px",
+                    border: "2px solid rgba(255,255,255,0.2)",
+                    flexShrink: 0,
+                  }} />
+                  <div style={{ display: "flex", flexDirection: "column", gap: "6px", flex: 1, overflow: "hidden" }}>
+                    <span style={{ 
+                      fontSize: "20px", 
+                      fontWeight: 600, 
+                      lineHeight: 1.3,
+                      letterSpacing: "-0.01em", 
+                      opacity: 0.95,
+                      display: "-webkit-box",
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: "vertical",
+                      overflow: "hidden"
+                    }}>
+                      {t.title}
+                    </span>
+                    <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+                      {showTaskCategory && t.category && (
+                        <span style={{ fontSize: "13px", opacity: 0.5, fontWeight: 500, letterSpacing: "0.05em", textTransform: "uppercase" }}>
+                          {t.category}
+                        </span>
+                      )}
+                      {showTaskDate && t.dueDate && (
+                        <span style={{ fontSize: "13px", opacity: 0.7, fontWeight: 500 }}>
+                          {t.dueDate === todayStr ? "Today" : t.dueDate}
+                        </span>
+                      )}
+                      {showTaskTime && t.dueTime && (
+                        <span style={{ fontSize: "13px", color: ac.hex, fontWeight: 600, letterSpacing: "0.02em" }}>
+                          {t.dueTime}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {showTaskPriority && t.priority === "high" && (
+                    <div style={{ padding: "6px 12px", background: "rgba(255,42,109,0.15)", color: "#ff2a6d", borderRadius: "100px", fontSize: "12px", fontWeight: 700 }}>
+                      HIGH
+                    </div>
+                  )}
+                  {showTaskPriority && t.priority === "medium" && (
+                    <div style={{ padding: "6px 12px", background: "rgba(255,165,0,0.15)", color: "#ffa500", borderRadius: "100px", fontSize: "12px", fontWeight: 700 }}>
+                      MEDIUM
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+          </div>
+        )}
+
+        {/* ── Right Column: Daily Habits ─────────────────────────────────── */}
+        {showDailyHabits && (
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            
+            <div style={{ marginBottom: "40px", animation: "slideUp 0.9s ease both" }}>
+              <h2 style={{ fontSize: "28px", fontWeight: 700, letterSpacing: "-0.02em", display: "flex", alignItems: "center", gap: "12px" }}>
+                <TargetIcon /> Daily Habits
+              </h2>
+            </div>
+
+            <div style={{ 
+              display: "grid", 
+              gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", 
+              gap: "16px" 
+            }}>
+              {habits.map((h, i) => {
+                const done = Boolean(h.history[todayStr]);
+                return (
+                  <div key={h.id} style={{
+                    padding: "20px",
+                    background: done ? `linear-gradient(135deg, ${ac.hex}40, ${ac.hex}10)` : "rgba(255,255,255,0.03)",
+                    border: done ? `1px solid ${ac.hex}50` : "1px solid rgba(255,255,255,0.06)",
+                    borderRadius: "20px",
+                    display: "flex", flexDirection: "column", gap: "16px",
+                    alignItems: "flex-start",
+                    animation: `slideUp ${1.0 + (i * 0.1)}s ease both`,
+                  }}>
+                    <div style={{ 
+                      width: "40px", height: "40px", borderRadius: "12px", 
+                      background: done ? ac.hex : "rgba(255,255,255,0.08)",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: "20px",
+                    }}>
+                      {done ? <CheckIcon /> : h.emoji}
+                    </div>
+                    <span style={{ fontSize: "16px", fontWeight: 600, opacity: done ? 1 : 0.7 }}>
+                      {h.name}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+          </div>
+        )}
+
+      </div>
+
     </div>
   );
 }

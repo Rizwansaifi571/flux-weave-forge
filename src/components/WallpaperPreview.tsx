@@ -22,9 +22,24 @@ const GLOW: Record<string, string> = {
 export function WallpaperPreview({ scale = 1 }: { scale?: number }) {
   const { tasks, habits, wallpaper, streakCount, userName, level, xp } = useStore();
   
+  const {
+    maxTasksCount = 3,
+    showTaskCategory = false,
+    showTaskTime = true,
+    showTaskPriority = true,
+    showClock = true,
+    showDate = true,
+    showDailyHabits = true,
+    showTasks = true,
+    showStreak = true,
+    showStats = true,
+    showTaskDate = false,
+  } = wallpaper;
+
   const quote = useMemo(() => motivationalQuotes[new Date().getDay() % motivationalQuotes.length], []);
   const today = todayStr();
-  const todaysTasks = tasks.filter((t) => !t.completed && (!t.dueDate || t.dueDate === today)).slice(0, 5);
+  const todaysTasks = tasks.filter((t) => !t.completed && (!t.dueDate || t.dueDate === today)).slice(0, maxTasksCount);
+  const remainingTasksCount = tasks.filter((t) => !t.completed && (!t.dueDate || t.dueDate === today)).length;
   const todaysHabits = habits.slice(0, 5);
   
   const completedToday = tasks.filter(t => t.completed && t.completedAt && t.completedAt.startsWith(today)).length;
@@ -35,194 +50,200 @@ export function WallpaperPreview({ scale = 1 }: { scale?: number }) {
   const glow = GLOW[wallpaper.accent] || GLOW.purple;
   
   const now = new Date();
-  const timeStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const hours12 = now.getHours() % 12 || 12;
+  const mins = String(now.getMinutes()).padStart(2, "0");
+  const timeHHMM = `${hours12}:${mins}`;
   const dateStr = now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
-  const greeting = (() => {
-    const h = now.getHours();
-    if (h < 12) return "Good morning";
-    if (h < 17) return "Good afternoon";
-    return "Good evening";
-  })();
 
   const fontFamily = wallpaper.font === "mono" ? "'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace"
     : wallpaper.font === "serif" ? "Georgia, 'Times New Roman', serif"
     : "'Inter', 'Segoe UI', -apple-system, sans-serif";
 
-  const glassCard = {
-    background: "linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.005) 100%)",
-    backdropFilter: "blur(40px) saturate(150%)",
-    border: "1px solid rgba(255,255,255,0.08)",
-    borderRadius: "1.5cqi",
-    padding: "2cqi",
-    boxShadow: "0 3cqi 6cqi rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1)",
-  };
+  // Circular progress helper for preview
+  const circleRadius = 2.5; // cqi
+  const circleCircumference = 2 * Math.PI * circleRadius;
+  const strokeDashoffset = circleCircumference - (progressPct / 100) * circleCircumference;
 
   return (
     <div
       className="relative w-full overflow-hidden"
       style={{
         aspectRatio: "16/10",
-        background: THEME_STYLES[wallpaper.theme] || THEME_STYLES.neon,
+        background: "#030303",
         fontFamily, color: "#fff",
         opacity: wallpaper.opacity,
         containerType: "inline-size"
       }}
     >
       <style>{`
-        @keyframes slow-spin {
-          0% { transform: rotate(0deg) scale(1); }
-          50% { transform: rotate(180deg) scale(1.1); }
-          100% { transform: rotate(360deg) scale(1); }
+        @keyframes float {
+          0%, 100% { transform: translateY(0); }
+          50% { transform: translateY(-2%); }
         }
       `}</style>
       
-      {/* Ambient Orbs */}
+      {/* Background Glow */}
       <div style={{
-        position: "absolute", top: "-20%", left: "-10%", width: "60cqi", height: "60cqi", borderRadius: "50%",
-        background: `radial-gradient(circle, ${glow}, transparent 60%)`, filter: "blur(8cqi)", opacity: 0.7, mixBlendMode: "screen",
-        animation: "slow-spin 40s linear infinite",
+        position: "absolute", top: "-20%", right: "-10%",
+        width: "70cqi", height: "70cqi", borderRadius: "50%",
+        background: `radial-gradient(circle, ${accent}22 0%, transparent 60%)`,
+        mixBlendMode: "screen",
       }} />
       <div style={{
-        position: "absolute", bottom: "-30%", right: "-15%", width: "70cqi", height: "70cqi", borderRadius: "50%",
-        background: `radial-gradient(circle, ${accent}40, transparent 65%)`, filter: "blur(10cqi)", opacity: 0.6, mixBlendMode: "screen",
-        animation: "slow-spin 50s reverse linear infinite",
+        position: "absolute", bottom: "-30%", left: "-10%",
+        width: "60cqi", height: "60cqi", borderRadius: "50%",
+        background: `radial-gradient(circle, ${accent}15 0%, transparent 60%)`,
+        mixBlendMode: "screen",
       }} />
 
-      {/* Grid overlay */}
-      <div className="absolute inset-0 opacity-[0.04] pointer-events-none" style={{
-        backgroundImage: "linear-gradient(rgba(255,255,255,.5) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.5) 1px, transparent 1px)",
-        backgroundSize: "3cqi 3cqi",
-        maskImage: "radial-gradient(ellipse at center, transparent 20%, black 100%)",
-        WebkitMaskImage: "radial-gradient(ellipse at center, transparent 20%, black 100%)",
-      }} />
-
-      {/* UI Container */}
-      <div className="relative z-10 w-full h-full flex justify-between items-center box-border" style={{ padding: "3cqi 4cqi" }}>
-        
-        {/* Left Column */}
-        <div className="flex flex-col gap-[3cqi]" style={{ width: "24cqi" }}>
-          <div>
-            <div style={{ fontSize: "1.2cqi", opacity: 0.6, textTransform: "uppercase", letterSpacing: "0.2em", fontWeight: 500, marginBottom: "1cqi" }} suppressHydrationWarning>
+      {/* Top Header */}
+      <div style={{
+        position: "absolute", top: 0, left: 0, right: 0,
+        padding: "3cqi 4cqi", display: "flex", justifyContent: "space-between", alignItems: "flex-start",
+        zIndex: 10,
+      }}>
+        <div>
+          {showClock && (
+            <div suppressHydrationWarning style={{ fontSize: "5cqi", fontWeight: 800, letterSpacing: "-0.04em", lineHeight: 0.9 }}>
+              {timeHHMM}
+            </div>
+          )}
+          {showDate && (
+            <div suppressHydrationWarning style={{ fontSize: "1.5cqi", fontWeight: 400, opacity: 0.6, marginTop: "0.5cqi", letterSpacing: "-0.01em" }}>
               {dateStr}
             </div>
-            <div style={{ fontSize: "2.5cqi", fontWeight: 300, lineHeight: 1.2 }} suppressHydrationWarning>
-              {greeting},<br/>
-              <span style={{ color: accent, fontWeight: 600 }}>{userName}</span>
-              <span style={{ marginLeft: "0.5cqi", fontSize: "2cqi" }}>✨</span>
-            </div>
-          </div>
-
-          {wallpaper.showTasks && (
-            <div style={glassCard}>
-              <div style={{ fontSize: "1.1cqi", opacity: 0.5, textTransform: "uppercase", letterSpacing: "0.15em", marginBottom: "1.5cqi", display: "flex", alignItems: "center", gap: "0.5cqi" }}>
-                <span style={{ width: "0.4cqi", height: "0.4cqi", borderRadius: "50%", background: accent, boxShadow: `0 0 1cqi ${accent}` }} />
-                Today's Focus
-              </div>
-              <div className="flex flex-col gap-[1.2cqi]">
-                {todaysTasks.length === 0 ? (
-                  <div style={{ opacity: 0.4, fontSize: "1cqi", padding: "1cqi 0" }}>All clear. Great job.</div>
-                ) : todaysTasks.map((t) => (
-                  <div key={t.id} style={{ display: "flex", alignItems: "center", gap: "0.8cqi" }}>
-                    <div style={{ width: "1cqi", height: "1cqi", borderRadius: "50%", border: `1px solid ${accent}60`, flexShrink: 0 }} />
-                    <span style={{ fontSize: "1.05cqi", opacity: 0.9, lineHeight: 1.3 }}>{t.title}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
           )}
         </div>
 
-        {/* Center Time */}
-        <div className="flex flex-col items-center relative" style={{ top: "-5cqi" }}>
-          <div suppressHydrationWarning style={{
-            fontSize: "12cqi", fontWeight: 700, letterSpacing: "-0.04em",
-            lineHeight: 1, textShadow: `0 2cqi 6cqi ${accent}40`,
-            background: `linear-gradient(180deg, #ffffff 30%, rgba(255,255,255,0.4))`,
-            WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
-          }}>
-            {timeStr}
-          </div>
-          {wallpaper.showQuote && (
-            <div suppressHydrationWarning style={{
-              fontSize: "1.1cqi", opacity: 0.5, fontStyle: "italic",
-              fontWeight: 300, letterSpacing: "0.05em", marginTop: "2cqi",
-              textAlign: "center", maxWidth: "35cqi"
-            }}>
-              "{quote}"
-            </div>
-          )}
-        </div>
-
-        {/* Right Column */}
-        <div className="flex flex-col gap-[3cqi] items-end" style={{ width: "22cqi" }}>
-          {wallpaper.showStats && (
-            <div style={{ ...glassCard, width: "100%", textAlign: "right" }}>
-              <div style={{ fontSize: "0.9cqi", opacity: 0.5, textTransform: "uppercase", letterSpacing: "0.15em", marginBottom: "0.5cqi" }}>
-                Operator Level {level}
-              </div>
-              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "flex-end", gap: "0.4cqi", marginBottom: "1.5cqi" }}>
-                <span style={{
-                  fontSize: "3cqi", fontWeight: 700,
-                  background: `linear-gradient(135deg, #fff, ${accent})`,
-                  WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
-                  textShadow: `0 0 2cqi ${accent}40`
-                }}>{xp.toLocaleString()}</span>
-                <span style={{ fontSize: "1.1cqi", opacity: 0.6, fontWeight: 500 }}>FP</span>
-              </div>
-              
-              {wallpaper.showStreak && (
-                <div style={{
-                  display: "inline-flex", alignItems: "center", gap: "0.6cqi",
-                  background: "rgba(255,255,255,0.05)", borderRadius: "1cqi", padding: "0.6cqi 1cqi",
-                  border: "1px solid rgba(255,255,255,0.05)", marginBottom: "2cqi"
-                }}>
-                  <span style={{ fontSize: "1.2cqi", filter: "drop-shadow(0 0 0.5cqi rgba(255,100,0,0.5))" }}>🔥</span>
-                  <span style={{ fontSize: "1.1cqi", fontWeight: 600 }}>{streakCount} Day Streak</span>
+        {(showStreak || showStats) && (
+          <div style={{ display: "flex", gap: "2cqi", alignItems: "center" }}>
+            {showStreak && (
+              <div style={{ display: "flex", alignItems: "center", gap: "0.8cqi" }}>
+                <span style={{ fontSize: "2.5cqi", filter: "drop-shadow(0 0 0.5cqi rgba(255,100,0,0.5))" }}>🔥</span>
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                  <span style={{ fontSize: "0.8cqi", opacity: 0.5, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase" }}>Streak</span>
+                  <span style={{ fontSize: "1.8cqi", fontWeight: 700, lineHeight: 1 }}>{streakCount ?? 0}</span>
                 </div>
-              )}
+              </div>
+            )}
+            
+            {showStreak && showStats && (
+              <div style={{ width: "2px", height: "3cqi", background: "rgba(255,255,255,0.1)" }} />
+            )}
+            
+            {showStats && (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+                <span style={{ fontSize: "0.8cqi", color: accent, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" }}>
+                  Level {level ?? 1}
+                </span>
+                <span style={{ fontSize: "1.8cqi", fontWeight: 700, lineHeight: 1 }}>
+                  {(xp ?? 0).toLocaleString()} <span style={{ fontSize: "1cqi", opacity: 0.5 }}>XP</span>
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
+      {/* Main Grid */}
+      <div style={{
+        position: "absolute", top: "15cqi", left: "4cqi", right: "4cqi", bottom: "3cqi",
+        display: "grid", gridTemplateColumns: showDailyHabits && showTasks ? "1.2fr 1fr" : "1fr",
+        gap: "6cqi", zIndex: 10, justifyContent: "center"
+      }}>
+        
+        {showTasks && (
+          <div style={{ display: "flex", flexDirection: "column", maxWidth: showDailyHabits ? "none" : "60cqi", margin: showDailyHabits ? "0" : "0 auto", width: "100%" }}>
+            
+            <div style={{ display: "flex", alignItems: "center", gap: "1.5cqi", marginBottom: "3cqi" }}>
+              <div style={{ position: "relative", width: "6cqi", height: "6cqi" }}>
+                <svg width="100%" height="100%" viewBox="0 0 36 36" style={{ transform: "rotate(-90deg)" }}>
+                  <circle cx="18" cy="18" r="15" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="3" />
+                  <circle cx="18" cy="18" r="15" fill="none" stroke={accent} strokeWidth="3" strokeDasharray="94.248" strokeDashoffset={94.248 - (progressPct/100)*94.248} strokeLinecap="round" />
+                </svg>
+                <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.2cqi", fontWeight: 700 }}>
+                  {progressPct}%
+                </div>
+              </div>
               <div>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.8cqi", opacity: 0.5, marginBottom: "0.5cqi" }}>
-                  <span>Daily Progress</span>
-                  <span>{progressPct}%</span>
-                </div>
-                <div style={{ width: "100%", height: "0.3cqi", background: "rgba(255,255,255,0.06)", borderRadius: "1cqi", overflow: "hidden" }}>
-                  <div style={{
-                    width: `${progressPct}%`, height: "100%",
-                    background: `linear-gradient(90deg, ${accent}, #fff)`,
-                    borderRadius: "1cqi", boxShadow: `0 0 0.5cqi ${accent}`
-                  }} />
-                </div>
+                <h1 style={{ fontSize: "2.8cqi", fontWeight: 800, letterSpacing: "-0.03em", margin: 0, lineHeight: 1.1 }}>Today's Mission</h1>
+                <p style={{ fontSize: "1.3cqi", opacity: 0.5, fontWeight: 400, margin: 0, marginTop: "0.3cqi" }}>
+                  {remainingTasksCount === 0 ? "You're all caught up for today." : `You have ${remainingTasksCount} tasks remaining.`}
+                </p>
               </div>
             </div>
-          )}
 
-          {wallpaper.showTasks && (
-            <div style={{ ...glassCard, width: "100%" }}>
-              <div style={{ fontSize: "1.1cqi", opacity: 0.5, textTransform: "uppercase", letterSpacing: "0.15em", marginBottom: "1.5cqi", display: "flex", alignItems: "center", gap: "0.5cqi" }}>
-                <span style={{ width: "0.4cqi", height: "0.4cqi", borderRadius: "50%", background: accent, boxShadow: `0 0 1cqi ${accent}` }} />
-                Daily Habits
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: "1cqi" }}>
-                {todaysHabits.map((h) => {
-                  const done = h.history[today];
-                  return (
-                    <div key={h.id} style={{
-                      display: "flex", alignItems: "center", gap: "0.8cqi",
-                      padding: "0.7cqi 1cqi", borderRadius: "1cqi",
-                      background: done ? `linear-gradient(90deg, ${accent}15, transparent)` : "rgba(255,255,255,0.02)",
-                      border: `1px solid ${done ? accent + "30" : "rgba(255,255,255,0.03)"}`,
-                      borderLeft: `2px solid ${done ? accent : "transparent"}`,
-                    }}>
-                      <span style={{ fontSize: "1.3cqi", filter: done ? `drop-shadow(0 0 1cqi ${accent}40)` : "none" }}>{h.emoji}</span>
-                      <span style={{ fontSize: "1.05cqi", opacity: done ? 1 : 0.6, fontWeight: done ? 500 : 400 }}>{h.name}</span>
+            <div style={{ display: "flex", flexDirection: "column", gap: "1.2cqi", overflow: "hidden" }}>
+              {todaysTasks.map((t) => (
+                <div key={t.id} style={{
+                  display: "flex", alignItems: "center", gap: "1.5cqi",
+                  padding: "1.5cqi 2cqi", background: "rgba(255,255,255,0.03)",
+                  borderRadius: "1.2cqi", border: "1px solid rgba(255,255,255,0.06)",
+                }}>
+                  <div style={{ width: "2cqi", height: "2cqi", borderRadius: "0.5cqi", border: "0.2cqi solid rgba(255,255,255,0.2)", flexShrink: 0 }} />
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.4cqi", flex: 1, overflow: "hidden" }}>
+                    <span style={{ fontSize: "1.5cqi", fontWeight: 600, lineHeight: 1.3, letterSpacing: "-0.01em", opacity: 0.95 }}>
+                      {t.title}
+                    </span>
+                    <div style={{ display: "flex", gap: "1cqi", alignItems: "center" }}>
+                      {showTaskCategory && t.category && (
+                        <span style={{ fontSize: "0.9cqi", opacity: 0.5, fontWeight: 500, letterSpacing: "0.05em", textTransform: "uppercase" }}>{t.category}</span>
+                      )}
+                      {showTaskDate && t.dueDate && (
+                        <span style={{ fontSize: "0.9cqi", opacity: 0.7, fontWeight: 500 }}>{t.dueDate === today ? "Today" : t.dueDate}</span>
+                      )}
+                      {showTaskTime && t.dueTime && (
+                        <span style={{ fontSize: "0.9cqi", color: accent, fontWeight: 600, letterSpacing: "0.02em" }}>{t.dueTime}</span>
+                      )}
                     </div>
-                  );
-                })}
-              </div>
+                  </div>
+                  {showTaskPriority && t.priority === "high" && (
+                    <div style={{ padding: "0.4cqi 0.8cqi", background: "rgba(255,42,109,0.15)", color: "#ff2a6d", borderRadius: "100px", fontSize: "0.9cqi", fontWeight: 700 }}>
+                      HIGH
+                    </div>
+                  )}
+                  {showTaskPriority && t.priority === "medium" && (
+                    <div style={{ padding: "0.4cqi 0.8cqi", background: "rgba(255,165,0,0.15)", color: "#ffa500", borderRadius: "100px", fontSize: "0.9cqi", fontWeight: 700 }}>
+                      MEDIUM
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
-          )}
-        </div>
+          </div>
+        )}
+
+        {showDailyHabits && (
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <div style={{ marginBottom: "3cqi" }}>
+              <h2 style={{ fontSize: "2.2cqi", fontWeight: 700, letterSpacing: "-0.02em", display: "flex", alignItems: "center", gap: "1cqi", margin: 0 }}>
+                <span style={{ color: accent }}>◎</span> Daily Habits
+              </h2>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "1.2cqi" }}>
+              {todaysHabits.map((h) => {
+                const done = Boolean(h.history[today]);
+                return (
+                  <div key={h.id} style={{
+                    padding: "1.5cqi",
+                    background: done ? `linear-gradient(135deg, ${accent}40, ${accent}10)` : "rgba(255,255,255,0.03)",
+                    border: done ? `1px solid ${accent}50` : "1px solid rgba(255,255,255,0.06)",
+                    borderRadius: "1.5cqi", display: "flex", flexDirection: "column", gap: "1.2cqi", alignItems: "flex-start",
+                  }}>
+                    <div style={{ 
+                      width: "3cqi", height: "3cqi", borderRadius: "0.8cqi", 
+                      background: done ? accent : "rgba(255,255,255,0.08)",
+                      display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.5cqi",
+                    }}>
+                      {done ? "✓" : h.emoji}
+                    </div>
+                    <span style={{ fontSize: "1.2cqi", fontWeight: 600, opacity: done ? 1 : 0.7 }}>{h.name}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

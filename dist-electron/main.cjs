@@ -258,6 +258,7 @@ var gotLock = import_electron.app.requestSingleInstanceLock();
 if (!gotLock) {
   import_electron.app.quit();
 } else {
+  import_electron.app.commandLine.appendSwitch("force-device-scale-factor", "2");
   import_electron.app.on("second-instance", () => openSettings());
   import_electron.app.whenReady().then(() => {
     if (!isDev) {

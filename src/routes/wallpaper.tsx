@@ -123,7 +123,7 @@ function WallpaperPage() {
     setWallpaper({ opacity: parseFloat(e.target.value) });
   }, [setWallpaper]);
 
-  const handleToggle = useCallback((key: keyof Pick<WallpaperConfig, "showTasks" | "showStreak" | "showQuote" | "showStats">) => (value: boolean) => {
+  const handleToggle = useCallback((key: keyof Pick<WallpaperConfig, "showTasks" | "showStreak" | "showQuote" | "showStats" | "showClock" | "showDate" | "showDailyHabits" | "showTaskCategory" | "showTaskTime" | "showTaskDate" | "showTaskPriority">) => (value: boolean) => {
     setWallpaper({ [key]: value });
   }, [setWallpaper]);
 
@@ -131,12 +131,20 @@ function WallpaperPage() {
     setWallpaper({
       theme: "neon",
       accent: "purple",
+      opacity: 0.9,
+      font: "geist",
       showTasks: true,
+      maxTasksCount: 3,
+      showTaskCategory: false,
+      showTaskTime: true,
+      showTaskDate: false,
+      showTaskPriority: true,
       showStreak: true,
       showQuote: true,
       showStats: true,
-      opacity: 0.9,
-      font: "geist",
+      showClock: true,
+      showDate: true,
+      showDailyHabits: true,
     });
   }, [setWallpaper]);
 
@@ -272,17 +280,51 @@ function WallpaperPage() {
               </div>
             </GlassCard>
 
-            {/* Widgets Toggles */}
+            {/* Layout & Widgets */}
             <GlassCard>
               <div className="flex items-center gap-2 mb-4">
                 <Layout className="h-4 w-4 text-purple-400" aria-hidden="true" />
-                <h3 className="font-semibold">Widgets</h3>
+                <h3 className="font-semibold">Layout & Widgets</h3>
               </div>
               <div className="space-y-3">
-                <Toggle label="Today's tasks" value={wallpaper.showTasks} onChange={handleToggle("showTasks")} />
-                <Toggle label="Streak counter" value={wallpaper.showStreak} onChange={handleToggle("showStreak")} />
-                <Toggle label="Motivational quote" value={wallpaper.showQuote} onChange={handleToggle("showQuote")} />
-                <Toggle label="Stats & progress" value={wallpaper.showStats} onChange={handleToggle("showStats")} />
+                <Toggle label="Show Clock" value={wallpaper.showClock ?? true} onChange={handleToggle("showClock")} />
+                <Toggle label="Show Date" value={wallpaper.showDate ?? true} onChange={handleToggle("showDate")} />
+                <Toggle label="Daily Tasks List" value={wallpaper.showTasks} onChange={handleToggle("showTasks")} />
+                <Toggle label="Daily Habits Grid" value={wallpaper.showDailyHabits ?? true} onChange={handleToggle("showDailyHabits")} />
+                <Toggle label="Streak Counter" value={wallpaper.showStreak} onChange={handleToggle("showStreak")} />
+                <Toggle label="Level & XP" value={wallpaper.showStats} onChange={handleToggle("showStats")} />
+              </div>
+            </GlassCard>
+
+            {/* Task Details */}
+            <GlassCard>
+              <div className="flex items-center gap-2 mb-4">
+                <Check className="h-4 w-4 text-purple-400" aria-hidden="true" />
+                <h3 className="font-semibold">Task Details</h3>
+              </div>
+              
+              <div className="mb-4">
+                <label htmlFor="tasks-slider" className="text-xs text-muted-foreground block mb-1">
+                  Max Tasks to Display: {wallpaper.maxTasksCount ?? 3}
+                </label>
+                <input
+                  id="tasks-slider"
+                  type="range"
+                  min={1}
+                  max={8}
+                  step={1}
+                  value={wallpaper.maxTasksCount ?? 3}
+                  onChange={(e) => setWallpaper({ maxTasksCount: parseInt(e.target.value) })}
+                  className="w-full h-1.5 rounded-lg appearance-none cursor-pointer bg-white/20 accent-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  style={{ background: `linear-gradient(to right, #c084fc 0%, #c084fc ${(((wallpaper.maxTasksCount ?? 3) - 1) / 7) * 100}%, rgba(255,255,255,0.2) ${(((wallpaper.maxTasksCount ?? 3) - 1) / 7) * 100}%)` }}
+                />
+              </div>
+
+              <div className="space-y-3">
+                <Toggle label="Show Category" value={wallpaper.showTaskCategory ?? false} onChange={handleToggle("showTaskCategory")} disabled={!wallpaper.showTasks} />
+                <Toggle label="Show Due Date" value={wallpaper.showTaskDate ?? false} onChange={handleToggle("showTaskDate")} disabled={!wallpaper.showTasks} />
+                <Toggle label="Show Due Time" value={wallpaper.showTaskTime ?? true} onChange={handleToggle("showTaskTime")} disabled={!wallpaper.showTasks} />
+                <Toggle label="Show Priority Badge" value={wallpaper.showTaskPriority ?? true} onChange={handleToggle("showTaskPriority")} disabled={!wallpaper.showTasks} />
               </div>
             </GlassCard>
 
