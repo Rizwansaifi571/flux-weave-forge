@@ -263,7 +263,7 @@ export function WallpaperDashboard() {
 
       {/* ── Main Content Grid ──────────────────────────────────────────── */}
       <div style={{
-        position: "absolute", top: "15vw", left: "4vw", right: "4vw", bottom: "3vw",
+        position: "absolute", top: "13vw", left: "4vw", right: "4vw", bottom: "3vw",
         display: "grid",
         gridTemplateColumns: showDailyHabits && showTasks ? "1.2fr 1fr" : "1fr",
         gap: "6vw",
@@ -275,7 +275,7 @@ export function WallpaperDashboard() {
         {showTasks && (
           <div style={{ display: "flex", flexDirection: "column", maxWidth: showDailyHabits ? "none" : "60vw", margin: showDailyHabits ? "0" : "0 auto", width: "100%" }}>
             
-            <div style={{ display: "flex", alignItems: "center", gap: "1.5vw", marginBottom: "3vw", animation: "slideUp 0.8s ease both" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "1.5vw", marginBottom: "3vw", height: "6vw", animation: "slideUp 0.8s ease both" }}>
               <div style={{ position: "relative", width: "6vw", height: "6vw" }}>
                 <svg width="100%" height="100%" viewBox="0 0 36 36" style={{ transform: "rotate(-90deg)" }}>
                   <circle cx="18" cy="18" r="15" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="3" />
@@ -361,7 +361,7 @@ export function WallpaperDashboard() {
         {showDailyHabits && (
           <div style={{ display: "flex", flexDirection: "column" }}>
             
-            <div style={{ marginBottom: "3vw", animation: "slideUp 0.9s ease both" }}>
+            <div style={{ display: "flex", alignItems: "center", height: "6vw", marginBottom: "3vw", animation: "slideUp 0.9s ease both" }}>
               <h2 style={{ fontSize: "2.2vw", fontWeight: 700, letterSpacing: "-0.02em", display: "flex", alignItems: "center", gap: "1vw", margin: 0 }}>
                 <span style={{ color: ac.hex }}>◎</span> Daily Habits
               </h2>

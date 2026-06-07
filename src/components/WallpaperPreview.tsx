@@ -130,7 +130,7 @@ export function WallpaperPreview({ scale = 1 }: { scale?: number }) {
 
       {/* Main Grid */}
       <div style={{
-        position: "absolute", top: "15cqi", left: "4cqi", right: "4cqi", bottom: "3cqi",
+        position: "absolute", top: "18cqi", left: "4cqi", right: "4cqi", bottom: "3cqi",
         display: "grid", gridTemplateColumns: showDailyHabits && showTasks ? "1.2fr 1fr" : "1fr",
         gap: "6cqi", zIndex: 10, justifyContent: "center"
       }}>
@@ -138,7 +138,7 @@ export function WallpaperPreview({ scale = 1 }: { scale?: number }) {
         {showTasks && (
           <div style={{ display: "flex", flexDirection: "column", maxWidth: showDailyHabits ? "none" : "60cqi", margin: showDailyHabits ? "0" : "0 auto", width: "100%" }}>
             
-            <div style={{ display: "flex", alignItems: "center", gap: "1.5cqi", marginBottom: "3cqi" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "1.5cqi", marginBottom: "3cqi", height: "6cqi" }}>
               <div style={{ position: "relative", width: "6cqi", height: "6cqi" }}>
                 <svg width="100%" height="100%" viewBox="0 0 36 36" style={{ transform: "rotate(-90deg)" }}>
                   <circle cx="18" cy="18" r="15" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="3" />
@@ -198,7 +198,7 @@ export function WallpaperPreview({ scale = 1 }: { scale?: number }) {
 
         {showDailyHabits && (
           <div style={{ display: "flex", flexDirection: "column" }}>
-            <div style={{ marginBottom: "3cqi" }}>
+            <div style={{ display: "flex", alignItems: "center", height: "6cqi", marginBottom: "3cqi" }}>
               <h2 style={{ fontSize: "2.2cqi", fontWeight: 700, letterSpacing: "-0.02em", display: "flex", alignItems: "center", gap: "1cqi", margin: 0 }}>
                 <span style={{ color: accent }}>◎</span> Daily Habits
               </h2>
